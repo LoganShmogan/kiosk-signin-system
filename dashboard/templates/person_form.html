@@ -1,0 +1,210 @@
+{% extends 'base.html' %}
+{% block title %}{{ 'New' if is_new else 'Edit' }} {{ 'Staff' if person_type == 'staff' else 'Member' }} — Kiosk Sign-In{% endblock %}
+
+{% block content %}
+<div class="page-header-row">
+    <h1 class="page-title">{{ 'New' if is_new else 'Edit' }} {{ 'Staff Member' if person_type == 'staff' else 'Member' }}</h1>
+    <div class="header-actions">
+        {% if not is_new %}
+        <a href="{{ url_for('export_person', person_id=person.id) }}" class="btn">Export Sign-in History</a>
+        {% endif %}
+        <a href="{{ url_for('people', type=person_type) }}" class="btn btn-secondary">Back to list</a>
+    </div>
+</div>
+
+<form method="POST" action="{{ url_for('person_new', type=person_type) if is_new else url_for('person_edit', person_id=person.id) }}">
+
+{% if person_type == 'staff' %}
+{# ── Staff form (simple) ── #}
+<div class="form-card">
+    <h2>Staff Details</h2>
+    <div class="form-grid">
+        <div class="form-group">
+            <label>First Name *</label>
+            <input type="text" name="first_name" value="{{ person.get('first_name', '') }}" required>
+        </div>
+        <div class="form-group">
+            <label>Last Name *</label>
+            <input type="text" name="last_name" value="{{ person.get('last_name', '') }}" required>
+        </div>
+        <div class="form-group">
+            <label>Role / Position</label>
+            <input type="text" name="school" value="{{ person.get('school', '') }}">
+        </div>
+        <div class="form-group">
+            <label>PIN (optional)</label>
+            <input type="text" name="pin" value="{{ person.get('pin', '') }}" placeholder="Leave blank for none">
+        </div>
+    </div>
+</div>
+
+{% else %}
+{# ── Member form (full) ── #}
+<div class="form-columns">
+    <div class="form-col">
+        <div class="form-card">
+            <h2>Child Details</h2>
+            <div class="form-group">
+                <label>First Name *</label>
+                <input type="text" name="first_name" value="{{ person.get('first_name', '') }}" required>
+            </div>
+            <div class="form-group">
+                <label>Last Name *</label>
+                <input type="text" name="last_name" value="{{ person.get('last_name', '') }}" required>
+            </div>
+            <div class="form-group">
+                <label>Date of Birth</label>
+                <input type="date" name="date_of_birth" value="{{ person.get('date_of_birth', '') }}">
+            </div>
+            <div class="form-group">
+                <label>School Attending</label>
+                <input type="text" name="school" value="{{ person.get('school', '') }}">
+            </div>
+            <div class="form-group">
+                <label>PIN (optional)</label>
+                <input type="text" name="pin" value="{{ person.get('pin', '') }}" placeholder="Leave blank for none">
+            </div>
+        </div>
+
+        <div class="form-card">
+            <h2>Attendance Days</h2>
+            <div class="form-group">
+                <label>Morning Days</label>
+                {% set mdays = (person.get('mornings_days', '') or '').split(',') %}
+                <div class="day-picker">
+                    {% for d in ['Mon','Tue','Wed','Thu','Fri'] %}
+                    <label class="day-check"><input type="checkbox" name="mornings_days" value="{{ d }}" {% if d in mdays %}checked{% endif %}> {{ d }}</label>
+                    {% endfor %}
+                </div>
+            </div>
+            <div class="form-group">
+                <label>Afternoon Days</label>
+                {% set adays = (person.get('afternoons_days', '') or '').split(',') %}
+                <div class="day-picker">
+                    {% for d in ['Mon','Tue','Wed','Thu','Fri'] %}
+                    <label class="day-check"><input type="checkbox" name="afternoons_days" value="{{ d }}" {% if d in adays %}checked{% endif %}> {{ d }}</label>
+                    {% endfor %}
+                </div>
+            </div>
+            <div class="form-group">
+                <label>Needs Morning Pickup?</label>
+                <div class="radio-row">
+                    <label class="radio-opt"><input type="radio" name="needs_pickup" value="1" {% if person.get('needs_pickup') %}checked{% endif %}> Yes</label>
+                    <label class="radio-opt"><input type="radio" name="needs_pickup" value="0" {% if not person.get('needs_pickup') %}checked{% endif %}> No</label>
+                </div>
+            </div>
+        </div>
+
+        <div class="form-card">
+            <h2>Activities</h2>
+            <div class="form-group">
+                <label>Activity / Activities</label>
+                <input type="text" name="activity" value="{{ person.get('activity', '') }}">
+            </div>
+            <div class="form-group">
+                <label>Time of Activity/s</label>
+                <input type="text" name="activity_time" value="{{ person.get('activity_time', '') }}">
+            </div>
+            <div class="form-group">
+                <label>Transport to Activity Required?</label>
+                <div class="radio-row">
+                    <label class="radio-opt"><input type="radio" name="transport_required" value="1" {% if person.get('transport_required') %}checked{% endif %}> Yes</label>
+                    <label class="radio-opt"><input type="radio" name="transport_required" value="0" {% if not person.get('transport_required') %}checked{% endif %}> No</label>
+                </div>
+            </div>
+            <div class="form-group">
+                <label>Days of Activity/s</label>
+                {% set actdays = (person.get('activity_days', '') or '').split(',') %}
+                <div class="day-picker">
+                    {% for d in ['Mon','Tue','Wed','Thu','Fri'] %}
+                    <label class="day-check"><input type="checkbox" name="activity_days" value="{{ d }}" {% if d in actdays %}checked{% endif %}> {{ d }}</label>
+                    {% endfor %}
+                </div>
+            </div>
+            <div class="form-group">
+                <label>Activity Address/es</label>
+                <textarea name="activity_address" rows="3">{{ person.get('activity_address', '') }}</textarea>
+            </div>
+        </div>
+    </div>
+
+    <div class="form-col">
+        <div class="form-card">
+            <h2>Caregiver / Parent Details</h2>
+            <div class="form-group">
+                <label>Full Name</label>
+                <input type="text" name="cg_full_name" value="{{ caregiver.get('full_name', '') }}">
+            </div>
+            <div class="form-group">
+                <label>Phone Number</label>
+                <input type="text" name="cg_phone" value="{{ caregiver.get('phone', '') }}">
+            </div>
+            <div class="form-group">
+                <label>Email</label>
+                <input type="text" name="cg_email" value="{{ caregiver.get('email', '') }}">
+            </div>
+            <div class="form-group">
+                <label>Relationship to Child</label>
+                <input type="text" name="cg_relationship" value="{{ caregiver.get('relationship', 'Parent/Guardian') }}">
+            </div>
+            <div class="form-group">
+                <label>Street Address</label>
+                <input type="text" name="cg_street_address" value="{{ caregiver.get('street_address', '') }}">
+            </div>
+            <div class="form-group">
+                <label>Suburb</label>
+                <input type="text" name="cg_suburb" value="{{ caregiver.get('suburb', '') }}">
+            </div>
+            <div class="form-group">
+                <label>City</label>
+                <input type="text" name="cg_city" value="{{ caregiver.get('city', '') }}">
+            </div>
+        </div>
+
+        <div class="form-card">
+            <h2>Emergency Contact</h2>
+            <div class="form-group">
+                <label>Emergency Contact Name</label>
+                <input type="text" name="cg_emergency_contact_name" value="{{ caregiver.get('emergency_contact_name', '') }}">
+            </div>
+            <div class="form-group">
+                <label>Emergency Contact Phone</label>
+                <input type="text" name="cg_emergency_contact_phone" value="{{ caregiver.get('emergency_contact_phone', '') }}">
+            </div>
+            <div class="form-group">
+                <label>Notify On</label>
+                <select name="cg_notify_on">
+                    <option value="BOTH" {% if caregiver.get('notify_on', 'BOTH') == 'BOTH' %}selected{% endif %}>Both Sign-In & Out</option>
+                    <option value="IN" {% if caregiver.get('notify_on') == 'IN' %}selected{% endif %}>Sign-In Only</option>
+                    <option value="OUT" {% if caregiver.get('notify_on') == 'OUT' %}selected{% endif %}>Sign-Out Only</option>
+                    <option value="NONE" {% if caregiver.get('notify_on') == 'NONE' %}selected{% endif %}>None</option>
+                </select>
+            </div>
+        </div>
+    </div>
+</div>
+{% endif %}
+
+<div class="form-actions">
+    <button type="submit" class="btn">{{ 'Create' if is_new else 'Save Changes' }}</button>
+    <a href="{{ url_for('people', type=person_type) }}" class="btn btn-secondary">Cancel</a>
+    {% if not is_new %}
+    <button type="button" class="btn btn-danger" onclick="document.getElementById('delete-form').submit()">Delete</button>
+    {% endif %}
+</div>
+</form>
+
+{% if not is_new %}
+<div class="form-card">
+    <h2>Last Signature on File</h2>
+    <img src="{{ url_for('person_signature', person_id=person.id) }}"
+         alt="Last signature used by {{ person.first_name }} {{ person.last_name }}"
+         class="signature-preview"
+         onerror="this.replaceWith(document.createTextNode('No signature on file yet.'))">
+</div>
+
+<form id="delete-form" method="POST" action="{{ url_for('person_delete', person_id=person.id) }}"
+      onsubmit="return confirm('Are you sure you want to delete {{ person.first_name }} {{ person.last_name }}? This cannot be undone.')">
+</form>
+{% endif %}
+{% endblock %}

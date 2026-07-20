@@ -1,0 +1,34 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{% block title %}Kiosk Sign-In Dashboard{% endblock %}</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+    {% block head %}{% endblock %}
+</head>
+<body>
+    <header>
+        <span class="site-title">Kiosk Sign-In Dashboard</span>
+        <nav>
+            <a href="{{ url_for('dashboard') }}" class="{% if request.endpoint == 'dashboard' %}active{% endif %}">Dashboard</a>
+            <a href="{{ url_for('logs') }}" class="{% if request.endpoint == 'logs' %}active{% endif %}">Sign-In Logs</a>
+            <a href="{{ url_for('people', type='member') }}" class="{% if request.endpoint in ('people', 'person_new', 'person_edit') %}active{% endif %}">People</a>
+            <a href="{{ url_for('audit') }}" class="{% if request.endpoint == 'audit' %}active{% endif %}">Audit Log</a>
+            <a href="{{ url_for('exports') }}" class="{% if request.endpoint == 'exports' %}active{% endif %}">Exports</a>
+            <a href="{{ url_for('alerts') }}" class="{% if request.endpoint in ('alerts', 'alert_delete') %}active{% endif %}">Alerts</a>
+        </nav>
+        <span class="logout-link"><a href="{{ url_for('logout') }}">Logout</a></span>
+    </header>
+    <main class="content">
+        {% with messages = get_flashed_messages(with_categories=true) %}
+        {% if messages %}
+        {% for category, message in messages %}
+        <div class="flash-msg flash-{{ category }}">{{ message }}</div>
+        {% endfor %}
+        {% endif %}
+        {% endwith %}
+        {% block content %}{% endblock %}
+    </main>
+</body>
+</html>

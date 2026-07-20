@@ -1,0 +1,76 @@
+{% extends 'base.html' %}
+{% block title %}{{ 'Staff' if person_type == 'staff' else 'Members' }} — Kiosk Sign-In{% endblock %}
+
+{% block content %}
+<div class="page-header-row">
+    <h1 class="page-title">{{ 'Staff' if person_type == 'staff' else 'Members' }}</h1>
+    <a href="{{ url_for('person_new', type=person_type) }}" class="btn">+ Add {{ 'Staff' if person_type == 'staff' else 'Member' }}</a>
+</div>
+
+<div class="type-tabs">
+    <a href="{{ url_for('people', type='member', search=search) }}"
+       class="type-tab {% if person_type == 'member' %}active{% endif %}">Members</a>
+    <a href="{{ url_for('people', type='staff', search=search) }}"
+       class="type-tab {% if person_type == 'staff' %}active{% endif %}">Staff</a>
+</div>
+
+<form method="GET" action="{{ url_for('people') }}" class="filter-form">
+    <input type="hidden" name="type" value="{{ person_type }}">
+    <div class="form-group">
+        <label>Search</label>
+        <input type="text" name="search" value="{{ search }}" placeholder="Name...">
+    </div>
+    <button type="submit" class="btn">Search</button>
+    <a href="{{ url_for('people', type=person_type) }}" class="btn btn-secondary">Clear</a>
+</form>
+
+<p class="record-count">{{ total }} {{ 'staff member' if person_type == 'staff' else 'member' }}{{ 's' if total != 1 }}</p>
+
+<div class="table-wrap">
+    <table>
+        <thead>
+            <tr>
+                <th>Name</th>
+                {% if person_type == 'staff' %}
+                <th>Role</th>
+                {% else %}
+                <th>School</th>
+                <th>Caregivers</th>
+                {% endif %}
+                <th>Date of Birth</th>
+                <th>Added</th>
+                <th></th>
+            </tr>
+        </thead>
+        <tbody>
+        {% for row in rows %}
+        <tr>
+            <td><a href="{{ url_for('person_edit', person_id=row.id) }}" class="row-link">{{ row.first_name }} {{ row.last_name }}</a></td>
+            {% if person_type == 'staff' %}
+            <td>{{ row.role or '—' }}</td>
+            {% else %}
+            <td>{{ row.school or '—' }}</td>
+            <td>{{ row.caregivers or '—' }}</td>
+            {% endif %}
+            <td>{{ row.date_of_birth or '—' }}</td>
+            <td>{{ row.created_at[:10] if row.created_at else '—' }}</td>
+            <td class="row-actions">
+                <a href="{{ url_for('person_edit', person_id=row.id) }}" class="btn btn-small">Edit</a>
+            </td>
+        </tr>
+        {% else %}
+        <tr><td colspan="{{ 5 if person_type == 'staff' else 6 }}" style="color:#999;text-align:center;padding:20px">No {{ 'staff' if person_type == 'staff' else 'members' }} found.</td></tr>
+        {% endfor %}
+        </tbody>
+    </table>
+</div>
+
+{% if total_pages > 1 %}
+<div class="pagination">
+    {% for p in range(1, total_pages + 1) %}
+    <a href="{{ url_for('people', page=p, type=person_type, search=search) }}"
+       class="{% if p == page %}active{% endif %}">{{ p }}</a>
+    {% endfor %}
+</div>
+{% endif %}
+{% endblock %}

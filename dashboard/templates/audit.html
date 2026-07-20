@@ -1,0 +1,40 @@
+{% extends 'base.html' %}
+{% block title %}Audit Log — Kiosk Sign-In{% endblock %}
+
+{% block content %}
+<h1 class="page-title">Audit Log</h1>
+<p class="page-subtitle">All system events — sign-ins, profile changes, and dashboard access.</p>
+
+<p class="record-count">{{ total }} event{{ 's' if total != 1 }}</p>
+
+<div class="table-wrap">
+    <table>
+        <thead>
+            <tr>
+                <th>Timestamp</th>
+                <th>Event</th>
+                <th>Description</th>
+            </tr>
+        </thead>
+        <tbody>
+        {% for row in rows %}
+        <tr>
+            <td style="white-space:nowrap">{{ row.timestamp }}</td>
+            <td><code style="font-size:12px;background:#f0f0f0;padding:2px 6px">{{ row.event_type }}</code></td>
+            <td>{{ row.description }}</td>
+        </tr>
+        {% else %}
+        <tr><td colspan="3" style="color:#999;text-align:center;padding:20px">No audit events yet.</td></tr>
+        {% endfor %}
+        </tbody>
+    </table>
+</div>
+
+{% if total_pages > 1 %}
+<div class="pagination">
+    {% for p in range(1, total_pages + 1) %}
+    <a href="{{ url_for('audit', page=p) }}" class="{% if p == page %}active{% endif %}">{{ p }}</a>
+    {% endfor %}
+</div>
+{% endif %}
+{% endblock %}

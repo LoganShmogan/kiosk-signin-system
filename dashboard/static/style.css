@@ -1,0 +1,587 @@
+* {
+    box-sizing: border-box;
+    margin: 0;
+    padding: 0;
+}
+
+body {
+    font-family: Arial, sans-serif;
+    background: #F5F3EE;
+    color: #2c2c2c;
+    font-size: 15px;
+}
+
+/* ── Header ── */
+header {
+    background: #372976;
+    color: white;
+    display: flex;
+    align-items: center;
+    padding: 0 24px;
+    height: 54px;
+    gap: 32px;
+}
+
+header .site-title {
+    font-size: 17px;
+    font-weight: bold;
+    white-space: nowrap;
+}
+
+header nav {
+    display: flex;
+    gap: 0;
+}
+
+header nav a {
+    color: white;
+    text-decoration: none;
+    padding: 0 18px;
+    line-height: 54px;
+    font-size: 14px;
+    border-left: 1px solid rgba(255,255,255,0.15);
+}
+
+header nav a.active {
+    background: #4a3a8a;
+}
+
+header .logout-link {
+    margin-left: auto;
+}
+
+header .logout-link a {
+    color: #ccc;
+    text-decoration: none;
+    font-size: 13px;
+}
+
+/* ── Content ── */
+.content {
+    padding: 24px;
+    max-width: 1200px;
+    margin: 0 auto;
+}
+
+.page-title {
+    font-size: 20px;
+    font-weight: bold;
+    margin-bottom: 6px;
+}
+
+.page-subtitle {
+    font-size: 13px;
+    color: #666;
+    margin-bottom: 20px;
+}
+
+/* ── Stat cards ── */
+.stat-grid {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 16px;
+    margin-bottom: 20px;
+}
+
+.stat-card {
+    background: white;
+    border: 1px solid #ddd;
+    padding: 18px 20px;
+}
+
+.stat-card .value {
+    font-size: 38px;
+    font-weight: bold;
+    color: #372976;
+    line-height: 1;
+}
+
+.stat-card .value.green {
+    color: #27ae60;
+}
+
+.stat-card .label {
+    font-size: 13px;
+    color: #666;
+    margin-top: 6px;
+}
+
+/* ── Chart sections ── */
+.chart-section {
+    background: white;
+    border: 1px solid #ddd;
+    padding: 16px 20px;
+    margin-bottom: 16px;
+}
+
+.chart-section h2 {
+    font-size: 14px;
+    font-weight: bold;
+    color: #444;
+    margin-bottom: 14px;
+    text-transform: uppercase;
+    letter-spacing: 0.4px;
+}
+
+.chart-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 16px;
+    margin-bottom: 16px;
+}
+
+/* ── Tables ── */
+.table-wrap {
+    background: white;
+    border: 1px solid #ddd;
+}
+
+table {
+    width: 100%;
+    border-collapse: collapse;
+}
+
+thead th {
+    background: #372976;
+    color: white;
+    padding: 10px 14px;
+    text-align: left;
+    font-size: 13px;
+    font-weight: bold;
+}
+
+tbody td {
+    padding: 9px 14px;
+    border-bottom: 1px solid #eee;
+    font-size: 14px;
+}
+
+tbody tr:last-child td {
+    border-bottom: none;
+}
+
+tbody tr:nth-child(even) td {
+    background: #fafafa;
+}
+
+.badge {
+    display: inline-block;
+    padding: 2px 10px;
+    font-size: 12px;
+    font-weight: bold;
+    letter-spacing: 0.5px;
+}
+
+.badge-in {
+    background: #27ae60;
+    color: white;
+}
+
+.badge-out {
+    background: #c0392b;
+    color: white;
+}
+
+/* ── Filters ── */
+.filter-form {
+    background: white;
+    border: 1px solid #ddd;
+    padding: 14px 16px;
+    margin-bottom: 16px;
+    display: flex;
+    gap: 14px;
+    align-items: flex-end;
+    flex-wrap: wrap;
+}
+
+.form-group {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+}
+
+label {
+    font-size: 12px;
+    color: #555;
+    font-weight: bold;
+    text-transform: uppercase;
+    letter-spacing: 0.3px;
+}
+
+input[type="text"],
+input[type="date"],
+input[type="password"],
+select {
+    padding: 7px 10px;
+    border: 1px solid #ccc;
+    font-size: 14px;
+    background: white;
+    color: #2c2c2c;
+    outline: none;
+}
+
+.btn {
+    padding: 7px 18px;
+    background: #372976;
+    color: white;
+    border: none;
+    font-size: 14px;
+    cursor: pointer;
+    text-decoration: none;
+    display: inline-block;
+}
+
+.btn-secondary {
+    background: #888;
+}
+
+/* ── Pagination ── */
+.pagination {
+    margin-top: 14px;
+    display: flex;
+    gap: 6px;
+    flex-wrap: wrap;
+}
+
+.pagination a {
+    padding: 5px 12px;
+    background: white;
+    border: 1px solid #ccc;
+    color: #372976;
+    text-decoration: none;
+    font-size: 13px;
+}
+
+.pagination a.active {
+    background: #372976;
+    color: white;
+    border-color: #372976;
+}
+
+.record-count {
+    font-size: 13px;
+    color: #666;
+    margin-bottom: 10px;
+}
+
+/* ── Login ── */
+body.login-page {
+    background: #372976;
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    min-height: 100vh;
+}
+
+.login-box {
+    background: white;
+    padding: 40px 44px;
+    width: 360px;
+}
+
+.login-box h1 {
+    font-size: 20px;
+    font-weight: bold;
+    margin-bottom: 6px;
+    color: #372976;
+}
+
+.login-box .subtitle {
+    font-size: 13px;
+    color: #888;
+    margin-bottom: 28px;
+}
+
+.login-box .form-group {
+    margin-bottom: 16px;
+    width: 100%;
+}
+
+.login-box label {
+    display: block;
+    margin-bottom: 5px;
+}
+
+.login-box input {
+    width: 100%;
+}
+
+.login-box .btn {
+    width: 100%;
+    padding: 10px;
+    font-size: 15px;
+    margin-top: 10px;
+    text-align: center;
+}
+
+.error-msg {
+    background: #fdecea;
+    border: 1px solid #c0392b;
+    color: #c0392b;
+    padding: 9px 12px;
+    margin-bottom: 16px;
+    font-size: 13px;
+}
+
+/* ── Currently signed in list ── */
+.signed-in-section {
+    background: white;
+    border: 1px solid #ddd;
+    padding: 16px 20px;
+    margin-bottom: 16px;
+}
+
+.signed-in-section h2 {
+    font-size: 14px;
+    font-weight: bold;
+    color: #444;
+    margin-bottom: 12px;
+    text-transform: uppercase;
+    letter-spacing: 0.4px;
+}
+
+.signed-in-list {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+}
+
+.signed-in-chip {
+    background: #edf8f1;
+    border: 1px solid #27ae60;
+    color: #1a7a42;
+    padding: 5px 12px;
+    font-size: 13px;
+}
+
+.empty-state {
+    color: #999;
+    font-size: 14px;
+    padding: 10px 0;
+}
+
+/* ── Type tabs ── */
+.type-tabs {
+    display: flex;
+    gap: 0;
+    margin-bottom: 16px;
+}
+
+.type-tab {
+    padding: 9px 24px;
+    background: white;
+    border: 1px solid #ddd;
+    color: #372976;
+    text-decoration: none;
+    font-size: 14px;
+    font-weight: bold;
+}
+
+.type-tab.active {
+    background: #372976;
+    color: white;
+    border-color: #372976;
+}
+
+/* ── Exports ── */
+.export-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+    gap: 20px;
+}
+
+.export-card {
+    background: white;
+    border: 1px solid #ddd;
+    padding: 24px;
+}
+
+.export-card h2 {
+    font-size: 16px;
+    font-weight: bold;
+    color: #372976;
+    margin-bottom: 8px;
+}
+
+.export-card p {
+    font-size: 13px;
+    color: #666;
+    margin-bottom: 18px;
+    line-height: 1.5;
+}
+
+.export-form {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+}
+
+.export-form .btn {
+    margin-top: 6px;
+    text-align: center;
+    padding: 10px;
+}
+
+/* ── Page header row ── */
+.page-header-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 6px;
+}
+
+.page-header-row .page-title {
+    margin-bottom: 0;
+}
+
+.header-actions,
+.row-actions {
+    display: flex;
+    gap: 8px;
+    align-items: center;
+}
+
+/* ── Row links ── */
+.row-link {
+    color: #372976;
+    text-decoration: none;
+    font-weight: bold;
+}
+
+.row-link:hover {
+    text-decoration: underline;
+}
+
+.btn-small {
+    padding: 4px 12px;
+    font-size: 12px;
+}
+
+/* ── Flash messages ── */
+.flash-msg {
+    padding: 10px 14px;
+    margin-bottom: 16px;
+    font-size: 14px;
+}
+
+.flash-success {
+    background: #edf8f1;
+    border: 1px solid #27ae60;
+    color: #1a7a42;
+}
+
+.flash-error {
+    background: #fdecea;
+    border: 1px solid #c0392b;
+    color: #c0392b;
+}
+
+/* ── Form cards ── */
+.form-card {
+    background: white;
+    border: 1px solid #ddd;
+    padding: 20px 24px;
+    margin-bottom: 16px;
+}
+
+.form-card h2 {
+    font-size: 15px;
+    font-weight: bold;
+    color: #372976;
+    margin-bottom: 16px;
+    padding-bottom: 8px;
+    border-bottom: 1px solid #eee;
+}
+
+.signature-preview {
+    max-width: 240px;
+    border: 1px solid #ddd;
+    background: white;
+}
+
+.form-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 14px;
+}
+
+.form-columns {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 20px;
+    align-items: start;
+}
+
+.form-card .form-group {
+    margin-bottom: 14px;
+}
+
+.form-card input[type="text"],
+.form-card input[type="date"],
+.form-card select,
+.form-card textarea {
+    width: 100%;
+}
+
+.form-card textarea {
+    padding: 7px 10px;
+    border: 1px solid #ccc;
+    font-size: 14px;
+    font-family: Arial, sans-serif;
+    resize: vertical;
+}
+
+/* ── Day picker checkboxes ── */
+.day-picker {
+    display: flex;
+    gap: 4px;
+    flex-wrap: wrap;
+}
+
+.day-check {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    padding: 5px 10px;
+    background: #f5f3ee;
+    border: 1px solid #ddd;
+    font-size: 13px;
+    font-weight: normal;
+    text-transform: none;
+    letter-spacing: 0;
+    cursor: pointer;
+}
+
+.day-check input[type="checkbox"] {
+    margin: 0;
+}
+
+/* ── Radio rows ── */
+.radio-row {
+    display: flex;
+    gap: 16px;
+}
+
+.radio-opt {
+    display: flex;
+    align-items: center;
+    gap: 5px;
+    font-size: 14px;
+    font-weight: normal;
+    text-transform: none;
+    letter-spacing: 0;
+    cursor: pointer;
+}
+
+/* ── Form actions bar ── */
+.form-actions {
+    display: flex;
+    gap: 10px;
+    margin-top: 8px;
+    margin-bottom: 24px;
+}
+
+.btn-danger {
+    background: #c0392b;
+    margin-left: auto;
+}

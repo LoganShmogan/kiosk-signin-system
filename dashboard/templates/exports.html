@@ -1,0 +1,77 @@
+{% extends 'base.html' %}
+{% block title %}Exports — Kiosk Sign-In{% endblock %}
+
+{% block content %}
+<h1 class="page-title">Exports</h1>
+<p class="page-subtitle">Download member and staff signing sheets as Excel files.</p>
+
+<div class="export-grid">
+    <div class="export-card">
+        <h2>Member Signing Sheets</h2>
+        <p>Export sign-in/out records for members (children) within a date range. Includes AM/PM sessions and signatures.</p>
+        <form method="GET" action="{{ url_for('export_members') }}" class="export-form">
+            <div class="form-group">
+                <label>From date</label>
+                <input type="date" name="date_from" value="{{ week_start }}" required>
+            </div>
+            <div class="form-group">
+                <label>To date</label>
+                <input type="date" name="date_to" value="{{ today }}" required>
+            </div>
+            <button type="submit" class="btn">Download Members Export</button>
+        </form>
+    </div>
+
+    <div class="export-card">
+        <h2>Staff Signing Sheets</h2>
+        <p>Export staff sign-in/out records within a date range. Every sign-in/out session is its own row with a duration, plus a total time in the centre for each staff member.</p>
+        <form method="GET" action="{{ url_for('export_staff') }}" class="export-form">
+            <div class="form-group">
+                <label>From date</label>
+                <input type="date" name="date_from" value="{{ week_start }}" required>
+            </div>
+            <div class="form-group">
+                <label>To date</label>
+                <input type="date" name="date_to" value="{{ today }}" required>
+            </div>
+            <button type="submit" class="btn">Download Staff Export</button>
+        </form>
+    </div>
+
+    <div class="export-card">
+        <h2>Export a Person's Sign-ins</h2>
+        <p>Pick one member or staff member and a date range to export just their sign-in/out records. Leave the dates blank to export their entire history.</p>
+        <form method="GET" action="{{ url_for('export_person') }}" class="export-form">
+            <div class="form-group">
+                <label>Person</label>
+                <select name="person_id" required>
+                    <option value="" disabled selected>Select a person…</option>
+                    {% if members %}
+                    <optgroup label="Members">
+                        {% for m in members %}
+                        <option value="{{ m.id }}">{{ m.first_name }} {{ m.last_name }}</option>
+                        {% endfor %}
+                    </optgroup>
+                    {% endif %}
+                    {% if staff %}
+                    <optgroup label="Staff">
+                        {% for s in staff %}
+                        <option value="{{ s.id }}">{{ s.first_name }} {{ s.last_name }}</option>
+                        {% endfor %}
+                    </optgroup>
+                    {% endif %}
+                </select>
+            </div>
+            <div class="form-group">
+                <label>From date (optional)</label>
+                <input type="date" name="date_from">
+            </div>
+            <div class="form-group">
+                <label>To date (optional)</label>
+                <input type="date" name="date_to">
+            </div>
+            <button type="submit" class="btn">Download Person Export</button>
+        </form>
+    </div>
+</div>
+{% endblock %}

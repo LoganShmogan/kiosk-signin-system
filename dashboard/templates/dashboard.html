@@ -1,0 +1,121 @@
+{% extends 'base.html' %}
+{% block title %}Dashboard — Kiosk Sign-In{% endblock %}
+
+{% block head %}
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+{% endblock %}
+
+{% block content %}
+<h1 class="page-title">Dashboard</h1>
+<p class="page-subtitle">{{ today }}</p>
+
+<div class="stat-grid">
+    <div class="stat-card">
+        <div class="value">{{ today_ins }}</div>
+        <div class="label">Children signed in today</div>
+    </div>
+    <div class="stat-card">
+        <div class="value green">{{ currently_in }}</div>
+        <div class="label">Currently here</div>
+    </div>
+    <div class="stat-card">
+        <div class="value">{{ total_members }}</div>
+        <div class="label">Total members</div>
+    </div>
+    <div class="stat-card">
+        <div class="value">{{ week_ins }}</div>
+        <div class="label">Sign-ins this week</div>
+    </div>
+</div>
+
+<div class="signed-in-section">
+    <h2>Currently Signed In</h2>
+    {% if signed_in_list %}
+    <div class="signed-in-list">
+        {% for c in signed_in_list %}
+        <span class="signed-in-chip">{{ c.first_name }} {{ c.last_name }} — {{ c.timestamp[11:16] }}</span>
+        {% endfor %}
+    </div>
+    {% else %}
+    <p class="empty-state">No children currently signed in.</p>
+    {% endif %}
+</div>
+
+<div class="chart-section">
+    <h2>Daily Activity — Last 30 Days</h2>
+    <canvas id="dailyChart" height="70"></canvas>
+</div>
+
+<div class="chart-grid">
+    <div class="chart-section">
+        <h2>Peak Hours — All Time</h2>
+        <canvas id="hourChart" height="120"></canvas>
+    </div>
+    <div class="chart-section">
+        <h2>Weekly Totals — Last 12 Weeks</h2>
+        <canvas id="weeklyChart" height="120"></canvas>
+    </div>
+</div>
+
+<div class="chart-section">
+    <h2>Monthly Totals — Last 12 Months</h2>
+    <canvas id="monthlyChart" height="55"></canvas>
+</div>
+
+<script>
+const baseOpts = {
+    animation: false,
+    responsive: true,
+    plugins: {
+        legend: { display: false }
+    },
+    scales: {
+        x: { grid: { display: false } },
+        y: { beginAtZero: true, ticks: { stepSize: 1, precision: 0 } }
+    }
+};
+
+new Chart(document.getElementById('dailyChart'), {
+    type: 'bar',
+    data: {
+        labels: {{ daily_labels | safe }},
+        datasets: [{ data: {{ daily_values | safe }}, backgroundColor: '#372976' }]
+    },
+    options: baseOpts
+});
+
+new Chart(document.getElementById('hourChart'), {
+    type: 'bar',
+    data: {
+        labels: {{ hour_labels | safe }},
+        datasets: [{ data: {{ hour_values | safe }}, backgroundColor: '#27ae60' }]
+    },
+    options: baseOpts
+});
+
+new Chart(document.getElementById('weeklyChart'), {
+    type: 'line',
+    data: {
+        labels: {{ weekly_labels | safe }},
+        datasets: [{
+            data: {{ weekly_values | safe }},
+            borderColor: '#372976',
+            backgroundColor: 'transparent',
+            tension: 0,
+            pointRadius: 4,
+            pointBackgroundColor: '#372976'
+        }]
+    },
+    options: baseOpts
+});
+
+new Chart(document.getElementById('monthlyChart'), {
+    type: 'bar',
+    data: {
+        labels: {{ monthly_labels | safe }},
+        datasets: [{ data: {{ monthly_values | safe }}, backgroundColor: '#c0392b' }]
+    },
+    options: baseOpts
+});
+</script>
+{% endblock %}

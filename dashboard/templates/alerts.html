@@ -1,0 +1,109 @@
+{% extends 'base.html' %}
+{% block title %}Alerts — Kiosk Sign-In{% endblock %}
+
+{% block content %}
+<h1 class="page-title">Alerts</h1>
+<p class="page-subtitle">Create a message that pops up on the kiosk sign-in screen when the targeted person(s) are being signed in or out.</p>
+
+<div class="form-card">
+    <h2>New Alert</h2>
+    <form method="POST" action="{{ url_for('alerts') }}">
+        <div class="form-group">
+            <label>Applies To</label>
+            <div class="radio-row">
+                <label class="radio-opt"><input type="radio" name="scope" value="all" checked onchange="alertsToggleScope()"> All Members</label>
+                <label class="radio-opt"><input type="radio" name="scope" value="run" onchange="alertsToggleScope()"> A Run</label>
+                <label class="radio-opt"><input type="radio" name="scope" value="member" onchange="alertsToggleScope()"> Single Person</label>
+            </div>
+        </div>
+
+        <div class="form-group" id="alert-run-group" style="display:none">
+            <label>Run Sheet</label>
+            <select name="run_id">
+                {% for r in runs %}
+                <option value="{{ r.id }}">{{ r.name }}</option>
+                {% else %}
+                <option value="" disabled>No run sheets yet</option>
+                {% endfor %}
+            </select>
+        </div>
+
+        <div class="form-group" id="alert-member-group" style="display:none">
+            <label>Person</label>
+            <select name="member_id">
+                <optgroup label="Members">
+                {% for m in members if m.person_type != 'staff' %}
+                <option value="{{ m.id }}">{{ m.first_name }} {{ m.last_name }}</option>
+                {% endfor %}
+                </optgroup>
+                <optgroup label="Staff">
+                {% for m in members if m.person_type == 'staff' %}
+                <option value="{{ m.id }}">{{ m.first_name }} {{ m.last_name }}</option>
+                {% endfor %}
+                </optgroup>
+            </select>
+        </div>
+
+        <div class="form-group">
+            <label>Message</label>
+            <textarea name="message" rows="3" required placeholder="e.g. Remember to bring swimming kit tomorrow"></textarea>
+        </div>
+
+        <div class="form-group">
+            <label>Stay Up For</label>
+            <div class="radio-row">
+                <select name="expiry_unit" id="alert-expiry-unit" onchange="alertsToggleExpiry()">
+                    <option value="none">No expiry</option>
+                    <option value="hours" selected>Hours</option>
+                    <option value="days">Days</option>
+                    <option value="weeks">Weeks</option>
+                    <option value="months">Months</option>
+                </select>
+                <input type="number" name="expiry_amount" id="alert-expiry-amount" min="0.5" step="0.5" value="24" style="width:80px">
+            </div>
+        </div>
+
+        <div class="form-actions">
+            <button type="submit" class="btn">Create Alert</button>
+        </div>
+    </form>
+</div>
+
+<h1 class="page-title" style="font-size:16px">Active Alerts</h1>
+<div class="table-wrap">
+    <table>
+        <thead>
+            <tr><th>Applies To</th><th>Message</th><th>Created</th><th>Expires</th><th></th></tr>
+        </thead>
+        <tbody>
+        {% for a in alerts %}
+        <tr>
+            <td>{{ a.target_name }}</td>
+            <td>{{ a.message }}</td>
+            <td>{{ a.created_at[:16] if a.created_at else '—' }}</td>
+            <td>{{ a.expires_at[:16] if a.expires_at else 'Never' }}</td>
+            <td>
+                <form method="POST" action="{{ url_for('alert_delete', alert_id=a.id) }}" onsubmit="return confirm('Delete this alert?')">
+                    <button type="submit" class="btn btn-danger btn-small">Delete</button>
+                </form>
+            </td>
+        </tr>
+        {% else %}
+        <tr><td colspan="5" style="color:#999;text-align:center;padding:20px">No active alerts.</td></tr>
+        {% endfor %}
+        </tbody>
+    </table>
+</div>
+
+<script>
+function alertsToggleScope() {
+    var scope = document.querySelector('input[name="scope"]:checked').value;
+    document.getElementById('alert-run-group').style.display = (scope === 'run') ? 'flex' : 'none';
+    document.getElementById('alert-member-group').style.display = (scope === 'member') ? 'flex' : 'none';
+}
+function alertsToggleExpiry() {
+    var unit = document.getElementById('alert-expiry-unit').value;
+    document.getElementById('alert-expiry-amount').style.display = (unit === 'none') ? 'none' : 'inline-block';
+}
+</script>
+{% endblock %}
