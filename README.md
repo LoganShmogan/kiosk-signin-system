@@ -22,7 +22,7 @@ A sign-in/out kiosk and web dashboard for tracking member and staff attendance. 
 ## Installation
 
 ```
-git clone https://github.com/YOUR_USERNAME/kiosk-signin-system.git
+git clone https://github.com/LoganShmogan/kiosk-signin-system.git
 cd kiosk-signin-system
 python -m venv .venv
 source .venv/bin/activate
