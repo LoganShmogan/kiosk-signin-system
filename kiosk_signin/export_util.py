@@ -1,13 +1,10 @@
 import ast
 import io
-import os
-from collections import defaultdict
 from datetime import datetime
 
 from openpyxl import Workbook
 from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
 from openpyxl.utils import get_column_letter
-from openpyxl.worksheet.pagebreak import Break
 
 try:
     from PIL import Image, ImageDraw
@@ -50,184 +47,36 @@ def render_signature(sig_bytes: bytes, width=160, height=60) -> bytes | None:
     return buf.getvalue()
 
 
-def _build_pupil_rows(signs: list) -> list:
-    """
-    Group raw sign events by pupil and produce one summary row per pupil:
-      name, am_in, am_in_sig, am_out, am_out_sig,
-             pm_in, pm_in_sig, pm_out, pm_out_sig
-
-    AM = before 12:00, PM = 12:00 onwards.
-    Only the first IN and first OUT per half-day are recorded.
-    """
-    from collections import defaultdict
-
-    by_member = defaultdict(list)
-    for s in signs:
-        by_member[(s["member_id"], s["first_name"], s["last_name"])].append(s)
-
-    rows = []
-    for (mid, fname, lname), events in by_member.items():
-        am_in = am_out = pm_in = pm_out = None
-
-        for e in events:
-            ts = e["timestamp"]
-            try:
-                hour = int(ts[11:13])
-            except Exception:
-                hour = 0
-            is_am = hour < 12
-
-            if is_am:
-                if e["direction"] == "IN"  and am_in  is None: am_in  = e
-                if e["direction"] == "OUT" and am_out is None: am_out = e
-            else:
-                if e["direction"] == "IN"  and pm_in  is None: pm_in  = e
-                if e["direction"] == "OUT" and pm_out is None: pm_out = e
-
-        rows.append({
-            "name":       f"{fname} {lname}",
-            "am_in":      am_in ["timestamp"][11:16] if am_in  else "",
-            "am_in_sig":  am_in ["signature"]        if am_in  else None,
-            "am_out":     am_out["timestamp"][11:16] if am_out else "",
-            "am_out_sig": am_out["signature"]        if am_out else None,
-            "pm_in":      pm_in ["timestamp"][11:16] if pm_in  else "",
-            "pm_in_sig":  pm_in ["signature"]        if pm_in  else None,
-            "pm_out":     pm_out["timestamp"][11:16] if pm_out else "",
-            "pm_out_sig": pm_out["signature"]        if pm_out else None,
-        })
-
-    rows.sort(key=lambda r: r["name"].lower())
-    return rows
-
-
-HEADERS = [
-    "Name",
-    "Sign In", "Signature",
-    "Sign Out", "Signature",
-    "Sign In", "Signature",
-    "Sign Out", "Signature",
-]
-COL_WIDTHS = [16, 7, 18, 7, 18, 7, 18, 7, 18]
-ROW_HEIGHT  = 45
-
-HEADER_FILL = PatternFill("solid", start_color="372976")
-HEADER_FONT = Font(name="Arial", bold=True, color="FFFFFF", size=11)
 DATA_FONT   = Font(name="Arial", size=11)
 ALT_FILL    = PatternFill("solid", start_color="F0EDE8")
 THIN        = Side(style="thin", color="D0CBE8")
 BORDER      = Border(left=THIN, right=THIN, top=THIN, bottom=THIN)
 CENTER      = Alignment(horizontal="center", vertical="center", wrap_text=True)
 LEFT        = Alignment(horizontal="left",   vertical="center", wrap_text=True)
+ROW_HEIGHT  = 45
 
 
-def _write_pupil_sheet(ws, day_signs: list, sheet_label: str) -> None:
-    """Populate one worksheet with a single day's pupil sign-in/out rows."""
-    rows = _build_pupil_rows(day_signs)
-
-    ws.merge_cells("A1:I1")
-    ws["A1"] = f"Kiosk Sign-In Export  |  {sheet_label}"
-    ws["A1"].font      = Font(name="Arial", bold=True, size=13, color="372976")
-    ws["A1"].alignment = CENTER
-    ws.row_dimensions[1].height = 28
-
-    ws.merge_cells("B2:E2")
-    ws["B2"] = "AM"
-    ws.merge_cells("F2:I2")
-    ws["F2"] = "PM"
-    for cell in (ws["B2"], ws["F2"]):
-        cell.font      = Font(name="Arial", bold=True, size=11, color="FFFFFF")
-        cell.fill      = PatternFill("solid", start_color="4a3a8a")
-        cell.alignment = CENTER
-    ws.row_dimensions[2].height = 20
-
-    for col_idx, (hdr, width) in enumerate(zip(HEADERS, COL_WIDTHS), start=1):
-        cell = ws.cell(row=3, column=col_idx, value=hdr)
-        cell.font      = HEADER_FONT
-        cell.fill      = HEADER_FILL
-        cell.alignment = CENTER
-        cell.border    = BORDER
-        ws.column_dimensions[get_column_letter(col_idx)].width = width
-    ws.row_dimensions[3].height = 20
-
-    for r_idx, row in enumerate(rows, start=4):
-        fill = ALT_FILL if r_idx % 2 == 0 else None
-        ws.row_dimensions[r_idx].height = ROW_HEIGHT
-
-        values = [
-            row["name"],
-            row["am_in"],  None,
-            row["am_out"], None,
-            row["pm_in"],  None,
-            row["pm_out"], None,
-        ]
-        sig_cols = {3: row["am_in_sig"], 5: row["am_out_sig"],
-                    7: row["pm_in_sig"], 9: row["pm_out_sig"]}
-
-        for col_idx, val in enumerate(values, start=1):
-            cell = ws.cell(row=r_idx, column=col_idx,
-                           value=val if val is not None else "")
-            cell.font      = DATA_FONT
-            cell.alignment = CENTER if col_idx > 1 else LEFT
-            cell.border    = BORDER
-            if fill:
-                cell.fill = fill
-
-        for col_idx, sig_bytes in sig_cols.items():
-            png = render_signature(sig_bytes) if sig_bytes else None
-            if png:
-                from openpyxl.drawing.image import Image as XLImage
-                img_obj = XLImage(io.BytesIO(png))
-                img_obj.width  = 120
-                img_obj.height = 38
-                ws.add_image(img_obj, f"{get_column_letter(col_idx)}{r_idx}")
-            else:
-                cell = ws.cell(row=r_idx, column=col_idx,
-                               value="No sig" if sig_bytes is None else "—")
-                cell.font      = Font(name="Arial", size=9, color="999999", italic=True)
-                cell.alignment = CENTER
-                cell.border    = BORDER
-                if fill:
-                    cell.fill = fill
-
-    ws.freeze_panes = "A4"
-
-    from openpyxl.worksheet.page import PageMargins
-    ws.page_setup.orientation = "landscape"
-    ws.page_setup.paperSize   = 9          # A4
-    ws.page_setup.fitToPage   = True
-    ws.page_setup.fitToWidth  = 1
-    ws.page_setup.fitToHeight = 0
-    ws.page_margins = PageMargins(left=0.4, right=0.4, top=0.6, bottom=0.6)
+_INVALID_SHEET_CHARS = set('[]:*?/\\')
 
 
-def generate_export(signs: list, date_from: str, date_to: str, output_path) -> str:
-    """Build the .xlsx file and write it to output_path (file path or file-like object).
-
-    One worksheet is created per calendar day found in `signs`, each holding that
-    day's pupils and their AM/PM sign-in/out times. Grouping every day's events
-    into a single sheet used to keep only the very first IN/OUT ever seen per
-    pupil across the whole range — splitting by day means every day's sign-ins
-    and sign-outs are kept, not just the first day's.
-    """
-    signs_by_date = defaultdict(list)
-    for s in signs:
-        signs_by_date[s["timestamp"][:10]].append(s)
-
-    wb = Workbook()
-    wb.remove(wb.active)
-
-    dates = sorted(signs_by_date.keys()) or [date_from or date_to or "Sign-in Export"]
-    for day in dates:
-        ws = wb.create_sheet(title=day[:31])
-        _write_pupil_sheet(ws, signs_by_date.get(day, []), day)
-
-    wb.save(output_path)
-    return output_path
+def _unique_sheet_title(label: str, used: set) -> str:
+    """An Excel-safe worksheet title (<=31 chars, no reserved characters),
+    de-duplicated against titles already used in this workbook."""
+    base = "".join(c for c in label if c not in _INVALID_SHEET_CHARS)[:31] or "Sheet"
+    title = base
+    n = 2
+    while title in used:
+        suffix = f" ({n})"
+        title = base[:31 - len(suffix)] + suffix
+        n += 1
+    used.add(title)
+    return title
 
 
-# ── Staff export ───────────────────────────────────────────────────────────────
-# Staff sign in/out with no restriction on time of day or count — so each row
-# is one sign-in/out session (not a fixed AM/PM slot), in the order it happened.
+# ── Person export (shared by members and staff) ────────────────────────────────
+# Sign in/out with no restriction on time of day or count — so each row is one
+# sign-in/out session (not a fixed AM/PM slot), in the order it happened. Every
+# person gets their own worksheet, so bulk downloads print/browse cleanly.
 
 STAFF_HEADERS    = ["Date", "Sign In", "Sign Out", "Duration"]
 STAFF_COL_WIDTHS = [10, 14, 18, 12]
@@ -280,7 +129,7 @@ def _year_label(sessions: list) -> str:
 
 def _build_staff_sessions(signs: list) -> list:
     """
-    Groups raw sign events by staff member and pairs them into sessions.
+    Groups raw sign events by person and pairs them into sessions.
 
     Returns a list of (member_key, sessions) tuples sorted by last name, where
     member_key = (member_id, first_name, last_name, role) and sessions is a
@@ -330,137 +179,124 @@ def _build_staff_sessions(signs: list) -> list:
     return result
 
 
-def generate_staff_export(signs: list, date_from: str, date_to: str, output_path) -> str:
-    """Build the staff sign-in/out .xlsx. output_path can be a file path or file-like object.
+def _write_person_sheet(ws, key, sessions, date_from, date_to, title_prefix) -> None:
+    """Populate one worksheet with a single person's sign-in/out sessions.
 
     Portrait layout: one row per sign-in/out session (Date | Sign In | Sign Out |
     Duration), with a second row underneath for signature images when present.
-    Each person gets their own section (name, role and year up top, a total
-    time-in-centre line at the bottom) and starts on a fresh printed page.
+    A name/role/year banner sits up top and a total time-in-centre line at
+    the bottom.
     """
-    staff_sessions = _build_staff_sessions(signs)
-
-    wb = Workbook()
-    ws = wb.active
-    ws.title = "Staff Sign-in Export"
+    _, fname, lname, role = key
+    last_col = get_column_letter(len(STAFF_HEADERS))
 
     for col_idx, width in enumerate(STAFF_COL_WIDTHS, start=1):
         ws.column_dimensions[get_column_letter(col_idx)].width = width
 
-    last_col = get_column_letter(len(STAFF_HEADERS))
-
     # ── Title ──────────────────────────────────────────────────────────────────
     ws.merge_cells(f"A1:{last_col}1")
-    ws["A1"]           = f"Staff Sign-in Export  |  {date_from}  to  {date_to}"
+    ws["A1"]           = f"{title_prefix}  |  {date_from}  to  {date_to}"
     ws["A1"].font      = Font(name="Arial", bold=True, size=13, color="372976")
     ws["A1"].alignment = CENTER
     ws.row_dimensions[1].height = 28
 
     current_row = 2
 
-    for person_idx, ((mid, fname, lname, role), sessions) in enumerate(staff_sessions):
+    # ── Person name banner ─────────────────────────────────────────────────────
+    name = f"{fname} {lname}".strip() or "Unknown"
+    parts = [name]
+    if role:
+        parts.append(role)
+    year_label = _year_label(sessions)
+    if year_label:
+        parts.append(year_label)
+    banner_text = "  —  ".join(parts)
+    ws.merge_cells(f"A{current_row}:{last_col}{current_row}")
+    c           = ws[f"A{current_row}"]
+    c.value     = banner_text
+    c.font      = STAFF_NAME_FONT
+    c.fill      = STAFF_NAME_FILL
+    c.alignment = LEFT
+    ws.row_dimensions[current_row].height = 26
+    current_row += 1
 
-        if person_idx > 0:
-            ws.row_breaks.append(Break(id=current_row - 1))
+    # ── Column headers ─────────────────────────────────────────────────────────
+    for col_idx, hdr in enumerate(STAFF_HEADERS, start=1):
+        cell           = ws.cell(row=current_row, column=col_idx, value=hdr)
+        cell.font      = STAFF_SUBHDR_FONT
+        cell.fill      = STAFF_SUBHDR_FILL
+        cell.alignment = CENTER
+        cell.border    = BORDER
+    ws.row_dimensions[current_row].height = 20
+    current_row += 1
 
-        current_row += 1   # blank spacer
-
-        # ── Person name banner ─────────────────────────────────────────────────
-        name = f"{fname} {lname}"
-        parts = [name]
-        if role:
-            parts.append(role)
-        year_label = _year_label(sessions)
-        if year_label:
-            parts.append(year_label)
-        banner_text = "  —  ".join(parts)
+    # ── One (or two) rows per session ───────────────────────────────────────────
+    total_mins = 0
+    if not sessions:
         ws.merge_cells(f"A{current_row}:{last_col}{current_row}")
-        c           = ws[f"A{current_row}"]
-        c.value     = banner_text
-        c.font      = STAFF_NAME_FONT
-        c.fill      = STAFF_NAME_FILL
-        c.alignment = LEFT
-        ws.row_dimensions[current_row].height = 26
+        mc           = ws[f"A{current_row}"]
+        mc.value     = "No sign-in records for this period."
+        mc.font      = Font(name="Arial", size=10, italic=True, color="999999")
+        mc.alignment = CENTER
         current_row += 1
+    else:
+        for s_idx, sess in enumerate(sessions):
+            in_evt, out_evt = sess["in"], sess["out"]
+            mins = _duration_mins(in_evt, out_evt)
+            if mins is not None:
+                total_mins += mins
 
-        # ── Column headers ─────────────────────────────────────────────────────
-        for col_idx, hdr in enumerate(STAFF_HEADERS, start=1):
-            cell           = ws.cell(row=current_row, column=col_idx, value=hdr)
-            cell.font      = STAFF_SUBHDR_FONT
-            cell.fill      = STAFF_SUBHDR_FILL
-            cell.alignment = CENTER
-            cell.border    = BORDER
-        ws.row_dimensions[current_row].height = 20
-        current_row += 1
+            row_fill = ALT_FILL if s_idx % 2 == 0 else None
+            ws.row_dimensions[current_row].height = ROW_HEIGHT
 
-        # ── One (or two) rows per session ───────────────────────────────────────
-        total_mins = 0
-        if not sessions:
-            ws.merge_cells(f"A{current_row}:{last_col}{current_row}")
-            mc           = ws[f"A{current_row}"]
-            mc.value     = "No sign-in records for this period."
-            mc.font      = Font(name="Arial", size=10, italic=True, color="999999")
-            mc.alignment = CENTER
+            in_text  = in_evt["timestamp"][11:16] if in_evt else ""
+            if out_evt is not None:
+                out_text, out_font = out_evt["timestamp"][11:16], DATA_FONT
+            else:
+                out_text, out_font = "Still signed in", STILL_IN_FONT
+
+            values = [
+                (_day_month(sess["date"]), DATA_FONT, LEFT),
+                (in_text,                  DATA_FONT, CENTER),
+                (out_text,                 out_font,  CENTER),
+                (_fmt_duration(mins),      TOTAL_FONT, CENTER),
+            ]
+            for col_idx, (val, font, align) in enumerate(values, start=1):
+                cell           = ws.cell(row=current_row, column=col_idx, value=val)
+                cell.font      = font
+                cell.alignment = align
+                cell.border    = BORDER
+                if row_fill:
+                    cell.fill = row_fill
             current_row += 1
-        else:
-            for s_idx, sess in enumerate(sessions):
-                in_evt, out_evt = sess["in"], sess["out"]
-                mins = _duration_mins(in_evt, out_evt)
-                if mins is not None:
-                    total_mins += mins
 
-                row_fill = ALT_FILL if s_idx % 2 == 0 else None
-                ws.row_dimensions[current_row].height = ROW_HEIGHT
-
-                in_text  = in_evt["timestamp"][11:16] if in_evt else ""
-                if out_evt is not None:
-                    out_text, out_font = out_evt["timestamp"][11:16], DATA_FONT
-                else:
-                    out_text, out_font = "Still signed in", STILL_IN_FONT
-
-                values = [
-                    (_day_month(sess["date"]), DATA_FONT, LEFT),
-                    (in_text,                  DATA_FONT, CENTER),
-                    (out_text,                 out_font,  CENTER),
-                    (_fmt_duration(mins),      TOTAL_FONT, CENTER),
-                ]
-                for col_idx, (val, font, align) in enumerate(values, start=1):
-                    cell           = ws.cell(row=current_row, column=col_idx, value=val)
-                    cell.font      = font
-                    cell.alignment = align
-                    cell.border    = BORDER
+            in_sig  = in_evt["signature"]  if in_evt  else None
+            out_sig = out_evt["signature"] if out_evt else None
+            if in_sig or out_sig:
+                ws.row_dimensions[current_row].height = SIG_ROW_HEIGHT
+                for col_idx in range(1, len(STAFF_HEADERS) + 1):
+                    cell        = ws.cell(row=current_row, column=col_idx, value="")
+                    cell.border = BORDER
                     if row_fill:
                         cell.fill = row_fill
+                for col_idx, sig_bytes in ((2, in_sig), (3, out_sig)):
+                    png = render_signature(sig_bytes) if sig_bytes else None
+                    if png:
+                        from openpyxl.drawing.image import Image as XLImage
+                        img_obj        = XLImage(io.BytesIO(png))
+                        img_obj.width  = 100
+                        img_obj.height = 32
+                        ws.add_image(img_obj, f"{get_column_letter(col_idx)}{current_row}")
                 current_row += 1
 
-                in_sig  = in_evt["signature"]  if in_evt  else None
-                out_sig = out_evt["signature"] if out_evt else None
-                if in_sig or out_sig:
-                    ws.row_dimensions[current_row].height = SIG_ROW_HEIGHT
-                    for col_idx in range(1, len(STAFF_HEADERS) + 1):
-                        cell        = ws.cell(row=current_row, column=col_idx, value="")
-                        cell.border = BORDER
-                        if row_fill:
-                            cell.fill = row_fill
-                    for col_idx, sig_bytes in ((2, in_sig), (3, out_sig)):
-                        png = render_signature(sig_bytes) if sig_bytes else None
-                        if png:
-                            from openpyxl.drawing.image import Image as XLImage
-                            img_obj        = XLImage(io.BytesIO(png))
-                            img_obj.width  = 100
-                            img_obj.height = 32
-                            ws.add_image(img_obj, f"{get_column_letter(col_idx)}{current_row}")
-                    current_row += 1
-
-        # ── Total time in the centre ─────────────────────────────────────────────
-        ws.merge_cells(f"A{current_row}:{last_col}{current_row}")
-        tc           = ws[f"A{current_row}"]
-        tc.value     = f"Total time in the centre: {_fmt_duration(total_mins)}"
-        tc.font      = TOTAL_FONT
-        tc.fill      = ALT_FILL
-        tc.alignment = LEFT
-        ws.row_dimensions[current_row].height = 22
-        current_row += 1
+    # ── Total time in the centre ─────────────────────────────────────────────────
+    ws.merge_cells(f"A{current_row}:{last_col}{current_row}")
+    tc           = ws[f"A{current_row}"]
+    tc.value     = f"Total time in the centre: {_fmt_duration(total_mins)}"
+    tc.font      = TOTAL_FONT
+    tc.fill      = ALT_FILL
+    tc.alignment = LEFT
+    ws.row_dimensions[current_row].height = 22
 
     from openpyxl.worksheet.page import PageMargins
     ws.page_setup.orientation = "portrait"
@@ -470,5 +306,58 @@ def generate_staff_export(signs: list, date_from: str, date_to: str, output_path
     ws.page_setup.fitToHeight = 0
     ws.page_margins = PageMargins(left=0.4, right=0.4, top=0.6, bottom=0.6)
 
+
+def _generate_person_sessions_export(signs: list, date_from: str, date_to: str,
+                                     output_path, title_prefix: str) -> str:
+    """Build a .xlsx with one worksheet per person, each showing their
+    sign-in/out sessions. Shared by generate_export and generate_staff_export
+    so member and staff exports look identical and every bulk download gives
+    each person their own sheet."""
+    sessions_by_person = _build_staff_sessions(signs)
+
+    wb = Workbook()
+    wb.remove(wb.active)
+    used_titles = set()
+
+    if not sessions_by_person:
+        ws = wb.create_sheet(title=_unique_sheet_title("No Records", used_titles))
+        last_col = get_column_letter(len(STAFF_HEADERS))
+        for col_idx, width in enumerate(STAFF_COL_WIDTHS, start=1):
+            ws.column_dimensions[get_column_letter(col_idx)].width = width
+        ws.merge_cells(f"A1:{last_col}1")
+        ws["A1"]           = f"{title_prefix}  |  {date_from}  to  {date_to}"
+        ws["A1"].font      = Font(name="Arial", bold=True, size=13, color="372976")
+        ws["A1"].alignment = CENTER
+        ws.row_dimensions[1].height = 28
+        ws.merge_cells(f"A2:{last_col}2")
+        ws["A2"]           = "No sign-in records for this period."
+        ws["A2"].font      = Font(name="Arial", size=10, italic=True, color="999999")
+        ws["A2"].alignment = CENTER
+    else:
+        for key, sessions in sessions_by_person:
+            _, fname, lname, _ = key
+            ws = wb.create_sheet(title=_unique_sheet_title(f"{fname} {lname}".strip(), used_titles))
+            _write_person_sheet(ws, key, sessions, date_from, date_to, title_prefix)
+
     wb.save(output_path)
     return output_path
+
+
+def generate_export(signs: list, date_from: str, date_to: str, output_path) -> str:
+    """Build the member sign-in/out .xlsx. output_path can be a file path or file-like object.
+
+    Same format as generate_staff_export: one worksheet per member, each
+    holding that person's sign-in/out sessions.
+    """
+    return _generate_person_sessions_export(signs, date_from, date_to, output_path,
+                                            title_prefix="Kiosk Sign-In Export")
+
+
+def generate_staff_export(signs: list, date_from: str, date_to: str, output_path) -> str:
+    """Build the staff sign-in/out .xlsx. output_path can be a file path or file-like object.
+
+    One worksheet per staff member, each holding that person's sign-in/out
+    sessions.
+    """
+    return _generate_person_sessions_export(signs, date_from, date_to, output_path,
+                                            title_prefix="Kiosk Staff Sign-In Export")

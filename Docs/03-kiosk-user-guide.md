@@ -36,7 +36,7 @@ An "Admin" button in the top-right corner opens the admin panel (password requir
 
 The Sign In screen is split into two panels:
 
-- **Left panel**: A search bar and a dropdown list of everyone in the system -- both members and staff. Type a name to filter the list. Tap a name to add them to the selection. The search matches against first name, last name, or full name.
+- **Left panel**: A search bar and a dropdown list of everyone in the system -- both members and staff. Type a name to filter the list. Tap a name to add them to the selection. The search matches against first name, last name, or full name. After adding someone, the search text clears automatically and the on-screen keyboard (Windows kiosk) stays open, ready for the next name.
 - **Right panel**: The "Selected Pupils" list. Members appear here sorted alphabetically. Tap the red X button next to a name to remove them.
 
 You can select multiple members for a batch sign-in/out.
@@ -81,10 +81,9 @@ Run Sheets allow batch sign-in for predefined groups (e.g. a school bus pickup).
 ### Using a Run Sheet
 
 1. Search for a run sheet by name in the left panel.
-2. Tap a run sheet to load its members into the right panel.
-3. Members who are already signed in today (and so would need to sign OUT next, not IN) are automatically removed from the list. A popup explains which members were skipped and why.
-4. Use the "Add another" button to temporarily add extra members who are not on the run sheet.
-5. Tap "Enter" to proceed to the signature screen.
+2. Tap a run sheet to load **all** of its members into the right panel, regardless of whether they're currently signed in or out -- a run sheet is used both for signing a group IN (e.g. a morning bus arrival) and for signing a group OUT (e.g. an afternoon bus departure), so nobody is pre-filtered out.
+3. Use the "Add another" button to temporarily add extra members who are not on the run sheet.
+4. Tap "Enter" to proceed to the signature screen, which auto-detects IN or OUT the same way it does for a direct sign-in (based on the first selected member's last sign event today) and skips anyone not eligible for that direction, same as described under [Direction Rules](#direction-rules) above.
 
 Run sheets are created and managed through the Admin Panel.
 
@@ -106,12 +105,12 @@ At the top of the Admin Panel, a table shows all sign-in and sign-out events rec
 
 Export all member sign-in records to an Excel (.xlsx) file for a given date range. Quick-select buttons are provided for "Today", "Last 7 days", and "Last 30 days". Enter custom dates in YYYY-MM-DD format.
 
-The export file includes:
-- Member names
-- AM and PM sign-in/out times
-- Embedded signature images
+Members aren't restricted to one AM and one PM sign -- they can sign in and out any number of times, at any time of day -- so the export lists every sign-in/out session that actually happened. Each member gets their own worksheet (tab) in the workbook:
 
-For ranges longer than a day, each day gets its own sheet (tab) in the workbook, so a week or month export shows every day's sign-ins rather than only the first day's.
+- A name/year banner at the top of their sheet
+- One row per session: date (day/month), sign-in time, sign-out time (or "Still signed in" if they haven't signed out yet), and the duration
+- A signature image row underneath a session's row, when a signature was captured for it
+- A "Total time in the centre" line at the end of their sheet, summing every session in the exported range
 
 The file is saved to the user's home directory.
 
@@ -119,12 +118,7 @@ The file is saved to the user's home directory.
 
 Export all staff sign-in records to an Excel (.xlsx) file for a given date range. Quick-select buttons are provided for "Last 14 days" and "Last 30 days".
 
-Staff aren't restricted to one AM and one PM sign like members are -- they can sign in and out any number of times, at any time of day -- so the export lists every sign-in/out session that actually happened, not a fixed AM/PM grid. Each staff member gets their own portrait-oriented section:
-
-- A name/role/year banner at the top of their section
-- One row per session: date (day/month), sign-in time, sign-out time (or "Still signed in" if they haven't signed out yet), and the duration
-- A signature image row underneath a session's row, when a signature was captured for it
-- A "Total time in the centre" line at the end of their section, summing every session in the exported range
+This uses the exact same layout as the member export above (one worksheet per staff member, one row per sign-in/out session, with a role added to the name banner) -- the two exports are identical apart from the title text on each sheet.
 
 The file is saved to the user's home directory, same as the member export.
 
@@ -134,7 +128,7 @@ Enter a new password (minimum 6 characters) and confirm it. The password is stor
 
 ### Member Management
 
-Search for existing members and tap "Edit" to open their profile. Tap "+ Add New Member" to create a new member record. Each result row also has an "Export" button that opens a small dialog asking for an optional date range (with Today/7-day/30-day quick-select buttons, or "All history" to clear the range) before downloading that member's sign-in/out history to an Excel file in the user's home directory (same AM/PM layout as the bulk Member export, one sheet per day). Leaving both dates blank exports their complete history, as before.
+Search for existing members and tap "Edit" to open their profile. Tap "+ Add New Member" to create a new member record. Each result row also has an "Export" button that opens a small dialog asking for an optional date range (with Today/7-day/30-day quick-select buttons, or "All history" to clear the range) before downloading that member's sign-in/out history to an Excel file in the user's home directory (same one-sheet layout as the bulk Member export above). Leaving both dates blank exports their complete history, as before.
 
 The Profile Screen shows all member details in a scrollable two-column form:
 

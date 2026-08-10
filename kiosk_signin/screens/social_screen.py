@@ -59,7 +59,7 @@ class SocialScreen(tk.Frame):
             "Social Media",
             [
                 ("Facebook", "Parent / Caregiver Page", theme.LINK_TEXT),
-                ("Website", "Littlemonkeys.co.nz", theme.LINK_TEXT),
+                ("Website", "www.example-kiosk.org", theme.LINK_TEXT),
             ],
         )
 
@@ -71,8 +71,8 @@ class SocialScreen(tk.Frame):
             cards_row,
             "Contacts",
             [
-                ("Phone", "+64 027 288 1800", theme.PRIMARY_TEXT),
-                ("Email", "afterschooladventures@littlemonkeys.nz", theme.LINK_TEXT),
+                ("Phone", "+1 555 0100", theme.PRIMARY_TEXT),
+                ("Email", "info@example-kiosk.org", theme.LINK_TEXT),
             ],
         )
 

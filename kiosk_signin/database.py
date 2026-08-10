@@ -4,7 +4,7 @@ import os
 import sys
 from datetime import datetime, timedelta
 
-if getattr(sys, "frozen", False):
+if getattr(sys, "frozen", False):  # pragma: no cover — only true inside a PyInstaller build
     # LOCALAPPDATA (C:\Users\<user>\AppData\Local) is always writable by the
     # current user, including the restricted kiosk account.
     _data_dir = os.path.join(
@@ -85,20 +85,18 @@ def init_db():
             signature   BLOB
         );
 
-        CREATE TABLE IF NOT EXISTS notices (
-            id          INTEGER PRIMARY KEY AUTOINCREMENT,
-            title       TEXT,
-            body        TEXT NOT NULL,
-            source      TEXT DEFAULT 'facebook',
-            post_id     TEXT UNIQUE,
-            posted_at   TEXT,
-            fetched_at  TEXT DEFAULT (datetime('now', 'localtime'))
-        );
-
         CREATE TABLE IF NOT EXISTS admins (
             id              INTEGER PRIMARY KEY AUTOINCREMENT,
             username        TEXT UNIQUE NOT NULL,
             password_hash   TEXT NOT NULL
+        );
+
+        CREATE TABLE IF NOT EXISTS dashboard_users (
+            id          INTEGER PRIMARY KEY AUTOINCREMENT,
+            name        TEXT UNIQUE NOT NULL,
+            pin_hash    TEXT NOT NULL,
+            role        TEXT NOT NULL CHECK(role IN ('admin', 'staff')),
+            created_at  TEXT DEFAULT (datetime('now', 'localtime'))
         );
 
         CREATE TABLE IF NOT EXISTS run_groups (
@@ -170,6 +168,18 @@ def init_db():
             h = hashlib.sha256("admin1234".encode()).hexdigest()
             conn.execute("INSERT INTO admins (username, password_hash) VALUES (?, ?)",
                          ("admin", h))
+
+        cur = conn.execute("SELECT COUNT(*) FROM dashboard_users")
+        if cur.fetchone()[0] == 0:
+            from werkzeug.security import generate_password_hash
+            conn.execute(
+                "INSERT INTO dashboard_users (name, pin_hash, role) VALUES (?, ?, ?)",
+                ("admin", generate_password_hash("1234"), "admin"),
+            )
+            print(
+                "WARNING: dashboard_users seeded with default login admin/1234 — "
+                "change this immediately in the Manage Dashboard Users page."
+            )
 
         cur = conn.execute("SELECT COUNT(*) FROM holiday_periods")
         if cur.fetchone()[0] == 0:
@@ -412,24 +422,34 @@ def get_today_signs():
     return [dict(r) for r in rows]
 
 
-# ── Notices ───────────────────────────────────────────────────────────────────
-
-def upsert_notices(posts: list):
+def get_sign(sign_id: int):
     with get_conn() as conn:
-        for p in posts:
-            conn.execute("""INSERT INTO notices (title, body, source, post_id, posted_at)
-                            VALUES (:title, :body, 'facebook', :post_id, :posted_at)
-                            ON CONFLICT(post_id) DO UPDATE SET
-                                body=excluded.body, posted_at=excluded.posted_at,
-                                fetched_at=datetime('now','localtime')
-                         """, p)
+        row = conn.execute("""
+            SELECT s.*, m.first_name, m.last_name
+            FROM sign_ins s JOIN members m ON s.member_id=m.id
+            WHERE s.id=?
+        """, (sign_id,)).fetchone()
+    return dict(row) if row else None
 
 
-def get_notices(limit: int = 20):
+def update_sign_time(sign_id: int, new_timestamp: str):
+    """Change the timestamp of an existing sign_ins record (dashboard admin
+    correction). new_timestamp must be 'YYYY-MM-DD HH:MM:SS'."""
     with get_conn() as conn:
-        rows = conn.execute("""SELECT * FROM notices
-                               ORDER BY posted_at DESC LIMIT ?""", (limit,)).fetchall()
-    return [dict(r) for r in rows]
+        conn.execute(
+            "UPDATE sign_ins SET timestamp=? WHERE id=?", (new_timestamp, sign_id)
+        )
+
+
+def add_sign(member_id: int, direction: str, timestamp: str, notes: str = ""):
+    """Insert a sign_ins record with an explicit timestamp (dashboard admin
+    correction for a forgotten IN/OUT). timestamp must be 'YYYY-MM-DD HH:MM:SS'."""
+    with get_conn() as conn:
+        cur = conn.execute(
+            "INSERT INTO sign_ins (member_id, direction, timestamp, notes) VALUES (?,?,?,?)",
+            (member_id, direction, timestamp, notes),
+        )
+        return cur.lastrowid
 
 
 # ── Auth ──────────────────────────────────────────────────────────────────────
@@ -445,6 +465,72 @@ def set_admin_password(new_password: str):
     h = hashlib.sha256(new_password.encode()).hexdigest()
     with get_conn() as conn:
         conn.execute("UPDATE admins SET password_hash=? WHERE username='admin'", (h,))
+
+
+# ── Dashboard users (web dashboard login, separate from the kiosk `admins`) ───
+
+def create_dashboard_user(name: str, pin: str, role: str):
+    """Creates a dashboard login. Returns the new row id, or None if the
+    name is already taken."""
+    from werkzeug.security import generate_password_hash
+    with get_conn() as conn:
+        try:
+            cur = conn.execute(
+                "INSERT INTO dashboard_users (name, pin_hash, role) VALUES (?, ?, ?)",
+                (name, generate_password_hash(pin), role),
+            )
+        except sqlite3.IntegrityError:
+            return None
+        log_event("DASHBOARD_USER_CREATED", f"Dashboard user created: {name} ({role})", conn)
+        return cur.lastrowid
+
+
+def check_dashboard_login(name: str, pin: str):
+    """Returns the dashboard_users row (as dict) if name/pin match, else None."""
+    from werkzeug.security import check_password_hash
+    with get_conn() as conn:
+        row = conn.execute(
+            "SELECT * FROM dashboard_users WHERE name=?", (name,)
+        ).fetchone()
+    if row and check_password_hash(row["pin_hash"], pin):
+        return dict(row)
+    return None
+
+
+def get_dashboard_user(user_id: int):
+    with get_conn() as conn:
+        row = conn.execute(
+            "SELECT * FROM dashboard_users WHERE id=?", (user_id,)
+        ).fetchone()
+    return dict(row) if row else None
+
+
+def list_dashboard_users():
+    with get_conn() as conn:
+        rows = conn.execute(
+            "SELECT * FROM dashboard_users ORDER BY name"
+        ).fetchall()
+    return [dict(r) for r in rows]
+
+
+def delete_dashboard_user(user_id: int):
+    with get_conn() as conn:
+        row = conn.execute(
+            "SELECT name FROM dashboard_users WHERE id=?", (user_id,)
+        ).fetchone()
+        name = row["name"] if row else f"ID {user_id}"
+        conn.execute("DELETE FROM dashboard_users WHERE id=?", (user_id,))
+        log_event("DASHBOARD_USER_DELETED", f"Dashboard user deleted: {name}", conn)
+
+
+def set_dashboard_user_pin(user_id: int, new_pin: str):
+    from werkzeug.security import generate_password_hash
+    with get_conn() as conn:
+        conn.execute(
+            "UPDATE dashboard_users SET pin_hash=? WHERE id=?",
+            (generate_password_hash(new_pin), user_id),
+        )
+        log_event("DASHBOARD_USER_PIN_CHANGED", f"PIN changed for dashboard user {user_id}", conn)
 
 
 # ── Run groups ────────────────────────────────────────────────────────────────

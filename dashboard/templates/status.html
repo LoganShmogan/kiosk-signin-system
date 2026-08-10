@@ -1,0 +1,31 @@
+{% extends 'base.html' %}
+{% block title %}Who's Here — Kiosk Sign-In{% endblock %}
+
+{% block content %}
+<h1 class="page-title">Who's Here</h1>
+<p class="page-subtitle">{{ today }}</p>
+
+<div class="stat-grid">
+    <div class="stat-card">
+        <div class="value">{{ today_ins }}</div>
+        <div class="label">Children signed in today</div>
+    </div>
+    <div class="stat-card">
+        <div class="value green">{{ currently_in }}</div>
+        <div class="label">Currently here</div>
+    </div>
+</div>
+
+<div class="signed-in-section">
+    <h2>Currently Signed In</h2>
+    {% if signed_in_list %}
+    <div class="signed-in-list">
+        {% for c in signed_in_list %}
+        <span class="signed-in-chip">{{ c.first_name }} {{ c.last_name }} — {{ c.timestamp[11:16] }}</span>
+        {% endfor %}
+    </div>
+    {% else %}
+    <p class="empty-state">No children currently signed in.</p>
+    {% endif %}
+</div>
+{% endblock %}

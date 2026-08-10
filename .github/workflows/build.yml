@@ -23,7 +23,7 @@ jobs:
         run: pip install -r requirements.txt pyinstaller
 
       - name: Build exe
-        run: pyinstaller --onefile --windowed --add-data "dashboard/templates;dashboard/templates" --add-data "dashboard/static;dashboard/static" --add-data "dashboard/app.py;dashboard" --add-data "kiosk_signin/export_util.py;kiosk_signin" --hidden-import flask kiosk_signin/app.py --name KioskSignIn-Windows
+        run: pyinstaller --onefile --windowed --add-data "dashboard/templates;dashboard/templates" --add-data "dashboard/static;dashboard/static" --add-data "dashboard/app.py;dashboard" --add-data "kiosk_signin/export_util.py;kiosk_signin" --hidden-import flask --hidden-import flask_wtf --hidden-import flask_limiter --hidden-import dotenv --hidden-import waitress --hidden-import werkzeug --collect-submodules werkzeug kiosk_signin/app.py --name KioskSignIn-Windows
 
       - name: Upload to release
         uses: softprops/action-gh-release@v2
@@ -48,7 +48,7 @@ jobs:
         run: pip install -r requirements.txt pyinstaller
 
       - name: Build binary
-        run: pyinstaller --onefile --add-data "dashboard/templates:dashboard/templates" --add-data "dashboard/static:dashboard/static" --add-data "dashboard/app.py:dashboard" --add-data "kiosk_signin/export_util.py:kiosk_signin" --hidden-import flask kiosk_signin/app.py --name KioskSignIn-Linux-x64
+        run: pyinstaller --onefile --add-data "dashboard/templates:dashboard/templates" --add-data "dashboard/static:dashboard/static" --add-data "dashboard/app.py:dashboard" --add-data "kiosk_signin/export_util.py:kiosk_signin" --hidden-import flask --hidden-import flask_wtf --hidden-import flask_limiter --hidden-import dotenv --hidden-import waitress --hidden-import werkzeug --collect-submodules werkzeug kiosk_signin/app.py --name KioskSignIn-Linux-x64
 
       - name: Upload to release
         uses: softprops/action-gh-release@v2

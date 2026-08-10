@@ -50,38 +50,114 @@ A blank PIN means no restriction -- anyone can sign the member in without enteri
 
 ## Dashboard Authentication
 
-### Session-Based Login
+The dashboard can be reachable over the internet (e.g. tunnelled via a reverse proxy that terminates HTTPS/TLS at its edge), so its authentication is designed to stand on its own rather than relying on being LAN-only.
 
-The web dashboard uses Flask's session system. After successful login, a flag is set in the session:
+### Multi-User Login: Name + PIN, With Roles
 
-```python
-session["logged_in"] = True
+Dashboard logins are no longer a single hardcoded credential. Every account lives in a `dashboard_users` table (see [02-database-design.md](02-database-design.md)) with a `name`, a hashed `pin_hash`, and a `role` of either `admin` or `staff`:
+
+```sql
+CREATE TABLE dashboard_users (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    name        TEXT UNIQUE NOT NULL,
+    pin_hash    TEXT NOT NULL,
+    role        TEXT NOT NULL CHECK(role IN ('admin', 'staff')),
+    created_at  TEXT DEFAULT (datetime('now', 'localtime'))
+);
 ```
 
-Protected routes check this flag using the `login_required` decorator:
+PINs are hashed with `werkzeug.security.generate_password_hash` (PBKDF2-based, salted) rather than the kiosk's plain SHA-256 scheme -- `check_dashboard_login()` verifies with `check_password_hash()`, which is timing-safe. On first run, a single account is seeded (`name="admin"`, PIN `1234`, `role="admin"`) so the live dashboard always has a working login; a console warning is printed until that PIN is changed via the "Manage Dashboard Users" admin page.
+
+An **admin** account is created by an existing admin from the Manage Dashboard Users page; **staff** accounts log in with just their name and PIN and can reach the web Sign In/Out page and the read-only `/status` ("Who's Here") page -- everything else (Dashboard analytics, People, Exports, Audit Log, Alerts, Manage Dashboard Users) requires `role == "admin"`.
+
+### Session Contents and Route Protection
+
+After a successful login, the session stores the authenticated user's identity, not just a boolean:
 
 ```python
-def login_required(f):
-    @wraps(f)
-    def decorated(*args, **kwargs):
-        if not session.get("logged_in"):
-            return redirect(url_for("login"))
-        return f(*args, **kwargs)
-    return decorated
+session["user_id"] = user["id"]
+session["name"] = user["name"]
+session["role"] = user["role"]
+session.permanent = True
 ```
 
-Sessions are signed cookies stored in the browser. Flask's `secret_key` is used to cryptographically sign the cookie, preventing tampering. The session data itself is stored client-side but cannot be modified without knowing the secret key.
-
-### Credential Storage
-
-The dashboard credentials are currently hardcoded:
+Two decorators protect routes:
 
 ```python
-DASHBOARD_USER = "admin"
-DASHBOARD_PASS = "1234"
+def login_required(f):        # any authenticated user, any role
+    ...
+    if not session.get("user_id"):
+        return redirect(url_for("login"))
+
+def admin_required(f):        # authenticated AND role == "admin"
+    ...
+    if session.get("role") != "admin":
+        flash("Admin access required.", "error")
+        return redirect(url_for("signin"))
 ```
 
-In a production deployment, these should be moved to environment variables or a configuration file.
+`login_required` alone guards the Sign In/Out page (`/signin`), the "Who's Here" status page (`/status`), and `/logout` -- any authenticated user, admin or staff, can reach these. `admin_required` guards every other page, including editing (`/logs/sign/<id>/edit`) or adding (`/logs/sign/add`) a sign-in/out time. A staff account that hits an admin-only URL directly is redirected back to `/signin` with a flash message, rather than a bare 403.
+
+Sessions are signed cookies -- Flask's `secret_key` cryptographically signs them, so they cannot be forged or tampered with client-side without knowing that key.
+
+### Secret Key
+
+The Flask `secret_key` is no longer a hardcoded string committed to source. It is read from the `DASHBOARD_SECRET_KEY` environment variable (optionally via a `.env` file, loaded with `python-dotenv` if installed):
+
+```python
+def _resolve_secret_key():
+    key = os.environ.get("DASHBOARD_SECRET_KEY")
+    if not key:
+        key = secrets.token_hex(32)
+        print("WARNING: DASHBOARD_SECRET_KEY is not set ...")
+    return key
+```
+
+If the variable is unset, a random key is generated for that process only -- the app still starts (rather than crashing or silently using a known key), but every session is invalidated on the next restart. Production deployments should set `DASHBOARD_SECRET_KEY` so sessions survive restarts. Note that changing the secret key (or the session schema, as happened in this migration) invalidates all existing sessions -- this is expected, not a bug; see [12-build-and-deployment.md](12-build-and-deployment.md).
+
+### CSRF Protection
+
+All state-changing (`POST`) routes are protected by `flask-wtf`'s `CSRFProtect`, applied globally:
+
+```python
+csrf = CSRFProtect(app)
+```
+
+Every HTML form that performs a `POST` (login, person create/edit/delete, alerts, dashboard user management, sign-in/out) includes a hidden `csrf_token` field. Requests missing or presenting an invalid token are rejected automatically -- there is no route-by-route opt-in to forget.
+
+### Login Rate Limiting
+
+`flask-limiter` throttles the `/login` route to 5 attempts per minute per IP address:
+
+```python
+@app.route("/login", methods=["GET", "POST"])
+@limiter.limit("5 per minute")
+def login():
+    ...
+```
+
+This slows down credential-guessing without needing an external store -- the default in-memory limiter storage is sufficient since the dashboard runs as a single Waitress process (see below), not multiple worker processes that would each have their own counters.
+
+### Secure Cookie Configuration
+
+```python
+_cookie_secure = os.environ.get("DASHBOARD_COOKIE_SECURE", "false").strip().lower() == "true"
+
+app.config.update(
+    SESSION_COOKIE_HTTPONLY=True,
+    SESSION_COOKIE_SAMESITE="Lax",
+    SESSION_COOKIE_SECURE=_cookie_secure,
+    PERMANENT_SESSION_LIFETIME=timedelta(hours=8),
+)
+```
+
+`SESSION_COOKIE_SECURE=True` would make the browser refuse to store or send the session cookie at all over a plain HTTP connection -- safe behind a reverse tunnel, where the browser always sees an `https://` URL, but the dashboard is *also* documented as reachable directly over plain HTTP on the local network (staff/admins on the same Wi-Fi as the kiosk -- see the README and [12-build-and-deployment.md](12-build-and-deployment.md)). Forcing `Secure` unconditionally broke every LAN login: with no session, the CSRF token that Flask-WTF stores in it never gets set either, so submitting the login form failed with "The CSRF session token is missing." rather than a plain "invalid password."
+
+Since one running process serves both access paths at once, it can't statically be "Secure-only" without breaking one of them -- so this defaults to `False` (`DASHBOARD_COOKIE_SECURE` unset or anything other than `true`), which keeps LAN access working. The internet-facing path is still protected by the tunnel's own TLS termination regardless of this flag; `SESSION_COOKIE_SECURE` is a defense-in-depth extra on top of that, not the thing standing between an attacker and the login form. Set `DASHBOARD_COOKIE_SECURE=true` only for a deployment that's exclusively reachable over HTTPS (no LAN-HTTP access at all).
+
+### Production WSGI Server
+
+The dashboard used to run on Flask's built-in development server (`app.run(...)`), which Flask itself warns is not suitable for production or internet-facing use. It's been replaced with [Waitress](https://docs.pylonsproject.org/projects/waitress/), a pure-Python production WSGI server, in both places the dashboard is started -- standalone (`dashboard/app.py`'s `__main__` block) and embedded in the kiosk (`kiosk_signin/app.py`'s `_start_dashboard()`, which launches it on a background thread). Waitress needs no extra infrastructure (no nginx/Docker) and, as a bonus, defaults to a small thread pool rather than the dev server's single-threaded handling. See [11-threading-and-concurrency.md](11-threading-and-concurrency.md) for how this fits the existing threading model.
 
 ## SQL Injection Prevention
 
@@ -108,7 +184,7 @@ Both the kiosk and dashboard validate that required fields (first name, last nam
 
 ### Date Validation
 
-Export date ranges are validated using `datetime.strptime()` to ensure they match the expected `YYYY-MM-DD` format before being passed to database queries. The single-person export (`/export/person`) treats its `date_from`/`date_to` query params as optional and does not strictly validate their format — they are only ever used in parameterised `DATE(s.timestamp) >= ?` / `<= ?` comparisons, so a malformed value just matches no rows rather than posing an injection risk.
+Export date ranges are validated using `datetime.strptime()` to ensure they match the expected `YYYY-MM-DD` format before being passed to database queries. The single-person export (`/export/person`) treats its `date_from`/`date_to` query params as optional and does not strictly validate their format -- they are only ever used in parameterised `DATE(s.timestamp) >= ?` / `<= ?` comparisons, so a malformed value just matches no rows rather than posing an injection risk.
 
 ### Direction Constraint
 
@@ -132,9 +208,9 @@ Foreign keys are enabled with `PRAGMA foreign_keys=ON` on every connection. Comb
 ### Unique Constraints
 
 Several tables enforce uniqueness:
-- `admins.username` -- prevents duplicate admin accounts.
+- `admins.username` -- prevents duplicate kiosk admin accounts.
+- `dashboard_users.name` -- prevents duplicate dashboard logins; the "Manage Dashboard Users" page surfaces this as a friendly "already exists" error rather than a raw database error.
 - `run_groups.name` -- prevents duplicate run sheet names.
-- `notices.post_id` -- prevents duplicate Facebook posts.
 - `holiday_enrollments(member_id, period_id)` -- prevents duplicate enrolments.
 
 ### Transaction Safety
@@ -150,8 +226,11 @@ This ensures that multi-statement operations (e.g. creating a member and logging
 All significant actions are recorded in the `audit_log` table via the `log_event()` function:
 
 - Member and staff creation, updates, and deletion
-- Sign-in and sign-out events
+- Sign-in and sign-out events (from both the kiosk and the web dashboard)
+- Admin corrections to a sign-in/out time (`SIGN_TIME_EDITED`, recording the old and new timestamp)
+- Admin additions of a missing sign-in/out time (`SIGN_TIME_ADDED`, recording the timestamp it was added as)
 - Dashboard login and logout
+- Dashboard user creation and deletion
 - Data exports
 
 The audit log is append-only -- there is no mechanism to delete or modify audit entries through the application. Each entry includes an event type, description, and timestamp.

@@ -313,6 +313,11 @@ class SignInScreen(tk.Frame):
             key=lambda m: (m["last_name"].lower(), m["first_name"].lower())
         )
         self._render_selected()
+        # Clear the search text for the next lookup, but keep focus on the
+        # entry (rather than letting it blur) so the virtual keyboard stays
+        # attached instead of closing after every selection.
+        self._search_var.set("")
+        self._search_entry.focus_set()
         if self._dropdown_open:
             self._populate_dropdown(self._get_filtered())
 

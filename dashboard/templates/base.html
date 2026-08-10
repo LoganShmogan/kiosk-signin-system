@@ -11,13 +11,21 @@
     <header>
         <span class="site-title">Kiosk Sign-In Dashboard</span>
         <nav>
+            <a href="{{ url_for('signin') }}" class="{% if request.endpoint == 'signin' %}active{% endif %}">Sign In / Out</a>
+            {% if session.get('role') == 'staff' %}
+            <a href="{{ url_for('status') }}" class="{% if request.endpoint == 'status' %}active{% endif %}">Who's Here</a>
+            {% endif %}
+            {% if session.get('role') == 'admin' %}
             <a href="{{ url_for('dashboard') }}" class="{% if request.endpoint == 'dashboard' %}active{% endif %}">Dashboard</a>
             <a href="{{ url_for('logs') }}" class="{% if request.endpoint == 'logs' %}active{% endif %}">Sign-In Logs</a>
             <a href="{{ url_for('people', type='member') }}" class="{% if request.endpoint in ('people', 'person_new', 'person_edit') %}active{% endif %}">People</a>
             <a href="{{ url_for('audit') }}" class="{% if request.endpoint == 'audit' %}active{% endif %}">Audit Log</a>
             <a href="{{ url_for('exports') }}" class="{% if request.endpoint == 'exports' %}active{% endif %}">Exports</a>
             <a href="{{ url_for('alerts') }}" class="{% if request.endpoint in ('alerts', 'alert_delete') %}active{% endif %}">Alerts</a>
+            <a href="{{ url_for('dashboard_users') }}" class="{% if request.endpoint in ('dashboard_users', 'dashboard_user_new', 'dashboard_user_delete') %}active{% endif %}">Dashboard Users</a>
+            {% endif %}
         </nav>
+        <span class="nav-toggle" onclick="document.querySelector('header nav').classList.toggle('open')">&#9776;</span>
         <span class="logout-link"><a href="{{ url_for('logout') }}">Logout</a></span>
     </header>
     <main class="content">

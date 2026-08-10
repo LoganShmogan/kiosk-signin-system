@@ -50,7 +50,6 @@ The dashboard can also be run independently with `python dashboard/app.py` for s
                    +-- database.py       (SQLite data access)
                    +-- export_util.py    (Excel generation)
                    +-- email_notifier.py (SMTP notifications)
-                   +-- facebook_api.py   (Graph API integration)
 ```
 
 ## Screen Navigation (Kiosk)

@@ -4,12 +4,13 @@ A sign-in/out kiosk and web dashboard for tracking member and staff attendance. 
 
 ## Features
 
-- Member and staff sign-in/out with required signature capture (a sign event cannot be submitted without a signature)
+- Member and staff sign-in/out with optional signature capture, from the kiosk or a mobile-friendly web page
 - Caregiver contact management with email notifications on sign-in/out
-- Run sheet management for grouping members
+- Run sheet management for grouping members, usable for signing a group in or out
+- Multi-user web dashboard logins with admin/staff roles, CSRF protection, and login rate limiting
 - Admin panel with password-protected access
-- Web dashboard with sign-in analytics, charts, and data exports
-- Excel export of member and staff sign-in records with embedded signatures, including a single-person export with an optional date range
+- Web dashboard with sign-in analytics, charts, searchable/filterable logs, and in-place correction or backfill of a sign-in/out time
+- Excel export of member and staff sign-in records with embedded signatures, one worksheet per person, including a single-person export with an optional date range
 - Audit logging of all system events
 - Virtual on-screen keyboard for Windows kiosk mode
 
@@ -54,9 +55,9 @@ python dashboard/app.py
 ### Default Credentials
 
 - Kiosk admin password: `admin1234`
-- Dashboard login: `admin` / `1234`
+- Dashboard login: name `admin`, PIN `1234` (a `dashboard_users` account, seeded on first run)
 
-**Change these, and the Flask `secret_key` in `dashboard/app.py`, before using this anywhere beyond local development.**
+**Change these before using this anywhere beyond local development.** Additional dashboard logins (admin or staff role) can be created from the "Manage Dashboard Users" page once logged in as admin. Set `DASHBOARD_SECRET_KEY` in the environment (see `.env.example`) so dashboard sessions survive restarts -- without it, a random key is generated each run and everyone is logged out.
 
 ## Testing
 
@@ -65,6 +66,14 @@ Tests use pytest and are located in the `tests/` directory.
 ```
 pytest
 ```
+
+With coverage:
+
+```
+pytest --cov --cov-report=term-missing
+```
+
+`.coveragerc` sets the required coverage threshold; see [Docs/10-testing.md](Docs/10-testing.md) for what's covered and the known gap (no automated tests yet for the Tkinter kiosk screens).
 
 ## Pre-built Binaries
 
@@ -75,11 +84,22 @@ A GitHub Actions workflow builds standalone executables on release for:
 
 These are single-file executables bundled with PyInstaller and attached to each GitHub release.
 
+## Printable Docs
+
+`Docs/generate_printable_docs.py` converts every `Docs/*.md` file into a styled PDF under `Docs/PrintableDocs/`. It's a docs-authoring-time tool, not a runtime dependency, so its packages aren't in `requirements.txt`:
+
+```
+pip install markdown xhtml2pdf
+python Docs/generate_printable_docs.py
+```
+
+Re-run it any time the `.md` files change to regenerate the PDFs.
+
 ## Tech Stack
 
 - **Kiosk UI:** Python, Tkinter
 - **Database:** SQLite (WAL mode)
-- **Web Dashboard:** Flask, HTML/CSS, Chart.js
+- **Web Dashboard:** Flask, Waitress (production WSGI server), Flask-WTF (CSRF), Flask-Limiter (rate limiting), HTML/CSS, Chart.js
 - **Exports:** openpyxl (Excel), Pillow (signature rendering)
 - **Notifications:** SMTP (Gmail)
 - **CI/CD:** GitHub Actions, PyInstaller
@@ -97,7 +117,6 @@ kiosk_signin/
 ├── theme.py                      # Colours, fonts, and widget style helpers
 ├── export_util.py                # Excel export generation (members and staff)
 ├── email_notifier.py             # Email notifications to caregivers on sign events
-├── facebook_api.py               # Facebook Graph API integration for notices (LEGACY)
 ├── email_config.json             # SMTP configuration for email notifications
 ├── README.md
 ├── screens/
@@ -110,7 +129,7 @@ kiosk_signin/
 │   ├── admin_screen.py           # Admin password entry and admin panel
 │   ├── run_sheets_screen.py      # Run sheet management
 │   ├── bus_sheets_screen.py      # Bus sheet management
-│   └── social_screen.py          # Facebook notice board display (LEGACY)
+│   └── social_screen.py          # Contact/social info display screen
 └── components/
     ├── __init__.py
     ├── widgets.py                # Reusable UI widgets
@@ -119,14 +138,28 @@ kiosk_signin/
 dashboard/
 ├── app.py                        # Flask web application
 ├── static/
-│   └── style.css                 # Dashboard stylesheet
+│   ├── style.css                 # Dashboard stylesheet
+│   └── signin.js                 # Web sign-in page: search, selection, signature pad
 └── templates/
     ├── base.html                 # Base layout template
     ├── login.html                # Login page
+    ├── signin.html                # Web Sign In / Out page (any logged-in user)
+    ├── status.html                # "Who's Here" read-only view (staff home page)
     ├── dashboard.html            # Analytics dashboard with charts
     ├── logs.html                 # Sign-in/out log viewer
+    ├── sign_edit.html             # Correct an existing sign-in/out time
+    ├── sign_add.html               # Add a missing sign-in/out time
     ├── audit.html                # Audit log viewer
+    ├── alerts.html                # Sign-in alert creation and list
     ├── exports.html              # Excel export date picker
     ├── people.html               # Member and staff listing
-    └── person_form.html          # Member/staff create and edit form
+    ├── person_form.html          # Member/staff create and edit form
+    └── dashboard_users.html       # Manage dashboard login accounts (admin only)
 ```
+
+## Configuration
+
+- `.env.example` -- copy to `.env` for `DASHBOARD_SECRET_KEY` and `DASHBOARD_COOKIE_SECURE` (loaded automatically via `python-dotenv` if present; `.env` itself is gitignored).
+- `.coveragerc` -- pytest coverage configuration.
+- `.github/workflows/test.yml` -- runs the test suite with coverage on every push/PR.
+- `.github/workflows/build.yml` -- builds and attaches Windows/Linux binaries on a GitHub release.

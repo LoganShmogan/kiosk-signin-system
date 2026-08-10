@@ -1,0 +1,59 @@
+{% extends 'base.html' %}
+{% block title %}Dashboard Users — Kiosk Sign-In{% endblock %}
+
+{% block content %}
+<h1 class="page-title">Dashboard Users</h1>
+<p class="page-subtitle">Accounts that can log into this web dashboard. Admins have full access; staff can only use the Sign In / Out page.</p>
+
+<div class="form-card">
+    <h2>New Dashboard User</h2>
+    <form method="POST" action="{{ url_for('dashboard_user_new') }}">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+        <div class="form-grid">
+            <div class="form-group">
+                <label>Name</label>
+                <input type="text" name="name" required placeholder="e.g. Sarah">
+            </div>
+            <div class="form-group">
+                <label>PIN</label>
+                <input type="password" name="pin" required inputmode="numeric" placeholder="Numeric PIN">
+            </div>
+        </div>
+        <div class="form-group">
+            <label>Access Level</label>
+            <div class="radio-row">
+                <label class="radio-opt"><input type="radio" name="role" value="staff" checked> Staff (Sign In / Out only)</label>
+                <label class="radio-opt"><input type="radio" name="role" value="admin"> Admin (full access)</label>
+            </div>
+        </div>
+        <div class="form-actions">
+            <button type="submit" class="btn">Create User</button>
+        </div>
+    </form>
+</div>
+
+<div class="table-wrap">
+    <table>
+        <thead>
+            <tr><th>Name</th><th>Role</th><th>Created</th><th></th></tr>
+        </thead>
+        <tbody>
+        {% for u in users %}
+        <tr>
+            <td>{{ u.name }}</td>
+            <td><span class="badge {{ 'badge-in' if u.role == 'admin' else 'badge-out' }}">{{ u.role }}</span></td>
+            <td>{{ u.created_at[:16] if u.created_at else '—' }}</td>
+            <td>
+                <form method="POST" action="{{ url_for('dashboard_user_delete', user_id=u.id) }}" onsubmit="return confirm('Delete dashboard user \'' + {{ u.name|tojson }} + '\'?')">
+                    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                    <button type="submit" class="btn btn-danger btn-small">Delete</button>
+                </form>
+            </td>
+        </tr>
+        {% else %}
+        <tr><td colspan="4" style="color:#999;text-align:center;padding:20px">No dashboard users yet.</td></tr>
+        {% endfor %}
+        </tbody>
+    </table>
+</div>
+{% endblock %}

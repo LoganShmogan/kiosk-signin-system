@@ -6,6 +6,10 @@
 
 <form method="GET" action="{{ url_for('logs') }}" class="filter-form">
     <div class="form-group">
+        <label>Search</label>
+        <input type="text" name="search" value="{{ search }}" placeholder="Search by name…">
+    </div>
+    <div class="form-group">
         <label>Status</label>
         <select name="status">
             <option value="">All</option>
@@ -42,8 +46,22 @@
         {% for row in rows %}
         <tr>
             <td>{{ row.first_name }} {{ row.last_name }}</td>
-            <td>{{ row.in_time or '—' }}</td>
-            <td>{{ row.out_time or '—' }}</td>
+            <td>
+                {{ row.in_time or '—' }}
+                {% if row.in_id %}
+                <a href="{{ url_for('sign_edit', sign_id=row.in_id) }}" class="btn btn-small">Edit</a>
+                {% else %}
+                <a href="{{ url_for('sign_add', member_id=row.member_id, direction='IN', date=(row.out_time[:10] if row.out_time else '')) }}" class="btn btn-small">Add</a>
+                {% endif %}
+            </td>
+            <td>
+                {{ row.out_time or '—' }}
+                {% if row.out_id %}
+                <a href="{{ url_for('sign_edit', sign_id=row.out_id) }}" class="btn btn-small">Edit</a>
+                {% else %}
+                <a href="{{ url_for('sign_add', member_id=row.member_id, direction='OUT', date=(row.in_time[:10] if row.in_time else '')) }}" class="btn btn-small">Add</a>
+                {% endif %}
+            </td>
             <td>
                 {% if row.out_time %}
                 <span class="badge badge-out">SIGNED OUT</span>
@@ -63,7 +81,7 @@
 {% if total_pages > 1 %}
 <div class="pagination">
     {% for p in range(1, total_pages + 1) %}
-    <a href="{{ url_for('logs', page=p, status=status, date_from=date_from, date_to=date_to) }}"
+    <a href="{{ url_for('logs', page=p, status=status, date_from=date_from, date_to=date_to, search=search) }}"
        class="{% if p == page %}active{% endif %}">{{ p }}</a>
     {% endfor %}
 </div>

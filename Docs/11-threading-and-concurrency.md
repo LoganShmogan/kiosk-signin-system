@@ -4,22 +4,38 @@ This document explains how the system uses threading to run multiple components 
 
 ## Overview
 
-The Kiosk Sign-In System runs two separate application interfaces (Tkinter kiosk and Flask dashboard) within a single process. It also performs background I/O operations (email sending, Facebook API calls) without blocking the user interface. All of this is achieved through Python's `threading` module.
+The Kiosk Sign-In System runs two separate application interfaces (Tkinter kiosk and Flask dashboard) within a single process. It also performs background I/O operations (email sending) without blocking the user interface. All of this is achieved through Python's `threading` module.
 
 ## Main Architecture: Kiosk + Dashboard
 
-The entry point (`app.py`) starts the Flask dashboard in a background thread before launching the Tkinter main loop:
+The entry point (`app.py`) builds the Tkinter kiosk app first, then starts the Flask dashboard in a background thread before entering the Tkinter main loop:
 
 ```python
 def _start_dashboard():
     from dashboard.app import app as dashboard_app
-    dashboard_app.run(host="0.0.0.0", port=5000, debug=False, use_reloader=False)
+    from waitress import serve
+    serve(dashboard_app, host="0.0.0.0", port=5000)
 
 if __name__ == "__main__":
+    kiosk_app = App()
     dashboard_thread = threading.Thread(target=_start_dashboard, daemon=True)
     dashboard_thread.start()
-    App().run()
+    kiosk_app.run()
 ```
+
+The dashboard is served by [Waitress](https://docs.pylonsproject.org/projects/waitress/) rather than Flask's own `app.run(...)` dev server -- Flask's development server explicitly warns it isn't fit for anything beyond local testing (no real concurrency handling, not hardened against slow/malicious clients), which matters now that the dashboard can be reachable over the internet via a reverse tunnel (see [09-authentication-and-security.md](09-authentication-and-security.md)). `waitress.serve()` is a blocking call with no special main-thread requirement -- exactly like the `app.run(..., use_reloader=False)` call it replaces -- so it drops into the existing daemon-thread setup unchanged. It also defaults to a small worker-thread pool internally, a mild concurrency improvement over the old single-threaded dev server.
+
+### Import Ordering: Build `App()` Before Starting the Dashboard Thread
+
+`App()` is constructed *before* `dashboard_thread.start()` is called, not after. This matters because `App.__init__` calls `database.init_db()`, which (since the dashboard login model was added) does `from werkzeug.security import generate_password_hash` to seed the default dashboard account. That's the first time anything in the process touches `werkzeug`. Meanwhile, `_start_dashboard()` -- running on its own thread -- imports `dashboard.app`, which imports `flask`, which also fully imports `werkzeug`.
+
+If both threads race to import `werkzeug` for the first time at the same moment, they can each observe the other's *partially initialized* submodules -- `werkzeug`'s own package `__init__.py` has legitimate internal cross-references (`werkzeug` → `werkzeug.test` → `werkzeug.utils` → back into `werkzeug.wsgi`) that CPython's import system safely serializes across threads via a per-module import lock. PyInstaller's frozen import machinery doesn't implement that locking as robustly, so under a packaged `.exe` this race can surface as:
+
+```
+ImportError: cannot import name 'wrap_file' from partially initialized module 'werkzeug.wsgi' (most likely due to a circular import)
+```
+
+Building `App()` fully on the main thread first means `database.init_db()`'s `werkzeug` import completes -- serially, no race -- before the dashboard thread is even created. By the time the dashboard thread does its own `import flask`, `werkzeug` is already fully loaded and cached in `sys.modules`, so there's nothing left to race. This only matters for a frozen/PyInstaller build; it's invisible when running from source, which is why it wasn't caught until the packaged kiosk `.exe` was tested.
 
 ### Why a Daemon Thread
 
@@ -39,12 +55,9 @@ Threads were chosen over processes because:
 2. A single process is simpler to deploy and manage, especially on a single-purpose kiosk device.
 3. The Flask server and Tkinter GUI do not compete for CPU -- Flask is I/O-bound (waiting for requests), and Tkinter is event-driven (waiting for user input).
 
-### Flask Configuration
+### Why Not Flask's Dev Server
 
-Two Flask settings are critical for this setup:
-
-- `debug=False` -- Debug mode starts a reloader subprocess that would conflict with the Tkinter main loop.
-- `use_reloader=False` -- The reloader monitors file changes and restarts the process, which would kill the kiosk.
+Flask's built-in `app.run()` has a debug/reloader mode that starts a subprocess and watches files for changes -- appropriate for local development, but it would conflict with (and potentially kill) the Tkinter main loop if ever enabled in this embedded setup. Waitress has no such reloader or debug subprocess to worry about; it just serves the WSGI app directly, which is both simpler and correct for this threading model.
 
 ## Background I/O Operations
 
@@ -66,26 +79,6 @@ A new thread is spawned for each notification. This is appropriate because:
 - Email sending is fire-and-forget -- we do not need the result.
 
 The daemon flag ensures that pending email threads do not prevent the application from exiting.
-
-### Facebook API Calls
-
-Facebook post fetching uses the same pattern:
-
-```python
-def refresh_notices_async(on_success=None, on_error=None):
-    def _run():
-        try:
-            posts = fetch_posts()
-            database.upsert_notices(posts)
-            if on_success:
-                on_success(posts)
-        except Exception as exc:
-            if on_error:
-                on_error(exc)
-    threading.Thread(target=_run, daemon=True).start()
-```
-
-The difference here is the use of callbacks (`on_success`, `on_error`). This allows the caller to update the UI when the operation completes. However, Tkinter requires UI updates to happen on the main thread, so the callback must use `widget.after()` to schedule the update rather than modifying widgets directly.
 
 ## SQLite Thread Safety
 
@@ -130,4 +123,3 @@ This is not threading in the traditional sense, but it uses the same principle o
 | Tkinter mainloop     | Main thread  | Kiosk GUI event loop             |
 | Flask server         | Daemon       | Web dashboard HTTP server        |
 | Email notifications  | Daemon       | SMTP email sending               |
-| Facebook API fetch   | Daemon       | HTTP request to Graph API        |

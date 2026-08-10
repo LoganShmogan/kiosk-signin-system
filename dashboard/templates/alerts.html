@@ -8,6 +8,7 @@
 <div class="form-card">
     <h2>New Alert</h2>
     <form method="POST" action="{{ url_for('alerts') }}">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
         <div class="form-group">
             <label>Applies To</label>
             <div class="radio-row">
@@ -84,6 +85,7 @@
             <td>{{ a.expires_at[:16] if a.expires_at else 'Never' }}</td>
             <td>
                 <form method="POST" action="{{ url_for('alert_delete', alert_id=a.id) }}" onsubmit="return confirm('Delete this alert?')">
+                    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
                     <button type="submit" class="btn btn-danger btn-small">Delete</button>
                 </form>
             </td>

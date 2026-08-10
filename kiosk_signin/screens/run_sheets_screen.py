@@ -4,7 +4,7 @@
 import tkinter as tk
 
 import database
-from components.widgets import Divider, PopupOverlay
+from components.widgets import Divider
 
 CREAM = "#FFFCF7"
 PURPLE = "#372976"
@@ -354,44 +354,23 @@ class RunSheetsScreen(tk.Frame):
                 widget.bind("<ButtonPress-1>", lambda e, run=r: self._load_run(run))
 
     def _load_run(self, run):
-        """Load pupils from a run sheet, skipping those already signed IN today
-        (they'd need to sign OUT next, not IN again). There's no other
-        restriction — sign in/out is unrestricted by time of day or count."""
+        """Load every pupil on a run sheet, regardless of whether they're
+        currently signed in or out — a run sheet is used both for signing a
+        group IN and for signing a group OUT (e.g. an afternoon bus run signs
+        out pupils who are, by definition, currently signed in), so filtering
+        by current status here would make one of those directions impossible.
+        Per-member eligibility for whichever direction is chosen is enforced
+        later by signature_screen, exactly like the direct sign-in flow."""
         self._hide_dropdown()
         self._search_var.set(run["name"])
         self._current_run_id = run["id"]
 
         members = database.get_run_members(run["id"])
-        already_in = []
-        to_load    = []
-
-        for m in members:
-            last = database.get_today_last_sign(m["id"])
-            if last is not None and last["direction"] == "IN":
-                already_in.append(m)
-            else:
-                to_load.append(m)
-
-        self._selected = to_load
+        self._selected = list(members)
         self._selected.sort(
             key=lambda m: (m["last_name"].lower(), m["first_name"].lower())
         )
         self._render_selected()
-
-        if already_in:
-            names = ", ".join(f"{m['first_name']} {m['last_name']}" for m in already_in)
-            msg = f"Already signed IN: {names}"
-
-            def _show_popup(m=msg):
-                p = PopupOverlay(
-                    self.winfo_toplevel(), is_error=True, width=540, height=300
-                )
-                p.set_message(
-                    f"The following pupils have been removed from this session:\n\n{m}"
-                )
-                p.add_button("OK", p.destroy, bg=PURPLE, fg=WHITE, hover_bg="#4a3a8a")
-
-            self.after(100, _show_popup)
 
     # ── Extra pupil search ────────────────────────────────────────────────────
 

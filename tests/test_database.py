@@ -457,3 +457,83 @@ def test_get_staff_signs_for_export_excludes_outside_range(db):
     db.record_sign(sid, "IN")
     signs = db.get_staff_signs_for_export("2000-01-01", "2000-01-02")
     assert not any(s["member_id"] == sid for s in signs)
+
+
+# ── Sign editing/adding ──────────────────────────────────────────────────────
+
+def test_get_sign_returns_sign_with_member_name(db):
+    mid = db.upsert_member(_member())
+    db.record_sign(mid, "IN")
+    last = db.get_last_sign(mid)
+    sign = db.get_sign(last["id"])
+    assert sign["first_name"] == "Jane"
+    assert sign["last_name"] == "Smith"
+
+
+def test_get_sign_not_found(db):
+    assert db.get_sign(99999) is None
+
+
+def test_update_sign_time(db):
+    mid = db.upsert_member(_member())
+    db.record_sign(mid, "IN")
+    sign_id = db.get_last_sign(mid)["id"]
+    db.update_sign_time(sign_id, "2026-01-01 09:00:00")
+    assert db.get_sign(sign_id)["timestamp"] == "2026-01-01 09:00:00"
+
+
+def test_add_sign_creates_new_record(db):
+    mid = db.upsert_member(_member())
+    sign_id = db.add_sign(mid, "IN", "2026-01-01 08:30:00", notes="backdated")
+    sign = db.get_sign(sign_id)
+    assert sign["direction"] == "IN"
+    assert sign["timestamp"] == "2026-01-01 08:30:00"
+    assert sign["notes"] == "backdated"
+
+
+# ── Dashboard users ───────────────────────────────────────────────────────────
+
+def test_init_seeds_default_dashboard_admin(db):
+    user = db.check_dashboard_login("admin", "1234")
+    assert user is not None
+    assert user["role"] == "admin"
+
+
+def test_create_dashboard_user(db):
+    uid = db.create_dashboard_user("staffuser", "4321", "staff")
+    assert uid is not None
+    user = db.get_dashboard_user(uid)
+    assert user["name"] == "staffuser"
+    assert user["role"] == "staff"
+
+
+def test_create_dashboard_user_duplicate_name_returns_none(db):
+    db.create_dashboard_user("dupuser", "1111", "staff")
+    assert db.create_dashboard_user("dupuser", "2222", "admin") is None
+
+
+def test_check_dashboard_login_wrong_pin(db):
+    db.create_dashboard_user("someone", "1111", "staff")
+    assert db.check_dashboard_login("someone", "9999") is None
+
+
+def test_check_dashboard_login_unknown_user(db):
+    assert db.check_dashboard_login("nobody", "1234") is None
+
+
+def test_list_dashboard_users_includes_seeded_admin(db):
+    users = db.list_dashboard_users()
+    assert any(u["name"] == "admin" and u["role"] == "admin" for u in users)
+
+
+def test_delete_dashboard_user(db):
+    uid = db.create_dashboard_user("todelete", "1234", "staff")
+    db.delete_dashboard_user(uid)
+    assert db.get_dashboard_user(uid) is None
+
+
+def test_set_dashboard_user_pin(db):
+    uid = db.create_dashboard_user("pinchange", "1111", "staff")
+    db.set_dashboard_user_pin(uid, "2222")
+    assert db.check_dashboard_login("pinchange", "2222") is not None
+    assert db.check_dashboard_login("pinchange", "1111") is None

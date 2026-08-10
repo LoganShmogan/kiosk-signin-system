@@ -8,7 +8,7 @@ The system uses a single SQLite database file (`signin_data.db`) accessed by bot
 
 ## Schema
 
-The database consists of nine tables:
+The database consists of ten tables:
 
 ### members
 
@@ -68,20 +68,6 @@ Records every sign-in and sign-out event. The `signature` column stores raw stro
 
 A member's "current"/most-recently-used signature is never stored separately — it's computed on demand by `database.get_last_signature(member_id)`, which finds the most recent row for that member with a non-null signature. This follows the same "compute on the fly" pattern as `get_last_sign()`/`get_today_last_sign()`/`get_allowed_direction()` below rather than caching state on the `members` row.
 
-### notices
-
-Stores posts fetched from the organisation's Facebook page.
-
-| Column     | Type    | Purpose                          |
-|------------|---------|----------------------------------|
-| id         | INTEGER | Primary key                      |
-| title      | TEXT    | First line of the post           |
-| body       | TEXT    | Full post text                   |
-| source     | TEXT    | Always "facebook"                |
-| post_id    | TEXT    | Facebook post ID (unique)        |
-| posted_at  | TEXT    | When the post was published      |
-| fetched_at | TEXT    | When the system fetched it       |
-
 ### admins
 
 Stores the admin account. Only one admin account exists by default.
@@ -91,6 +77,20 @@ Stores the admin account. Only one admin account exists by default.
 | id            | INTEGER | Primary key                  |
 | username      | TEXT    | Unique username              |
 | password_hash | TEXT    | SHA-256 hash of the password |
+
+### dashboard_users
+
+Login accounts for the **web dashboard** — separate from the kiosk's single-row `admins` table above. Supports any number of accounts, each with its own name, hashed PIN, and role.
+
+| Column      | Type    | Purpose                                         |
+|-------------|---------|--------------------------------------------------|
+| id          | INTEGER | Primary key                                      |
+| name        | TEXT    | Unique login name                                |
+| pin_hash    | TEXT    | Salted hash of the PIN (`werkzeug.security`)     |
+| role        | TEXT    | `"admin"` or `"staff"` (enforced with CHECK)     |
+| created_at  | TEXT    | Auto-set to local datetime on insert             |
+
+`admin` accounts get full dashboard access; `staff` accounts can only use the web Sign In/Out page. One `admin`/`1234` row is seeded on first run so the dashboard always has a working login — see [09-authentication-and-security.md](09-authentication-and-security.md) for the hashing scheme, session model, and why this table is kept separate from `admins` rather than extending it.
 
 ### run_groups and run_members
 
@@ -187,7 +187,7 @@ Setting `conn.row_factory = sqlite3.Row` means query results are returned as `sq
 
 The `upsert_member()` function checks whether the data dictionary contains an `id` key. If it does, it performs an UPDATE; otherwise, it performs an INSERT and returns the new row's ID via `cursor.lastrowid`. This avoids requiring separate create and update functions.
 
-For notices, SQLite's `ON CONFLICT ... DO UPDATE` syntax is used for a true upsert based on the unique `post_id` column.
+For `upsert_holiday_enrollment()`, SQLite's `ON CONFLICT ... DO UPDATE` syntax is used for a true upsert based on the unique `(member_id, period_id)` pair.
 
 ### Schema Migration
 
@@ -202,7 +202,7 @@ except Exception:
 
 ### Seed Data
 
-`init_db()` checks whether key tables are empty (e.g. `SELECT COUNT(*) FROM admins`) and inserts default data if so. This provides a working system out of the box with sample members, a default admin account, and preset holiday periods.
+`init_db()` checks whether key tables are empty (e.g. `SELECT COUNT(*) FROM admins`) and inserts default data if so. This provides a working system out of the box with sample members, a default kiosk admin account, a default dashboard login (`dashboard_users`), and preset holiday periods.
 
 ### Parameterised Queries
 

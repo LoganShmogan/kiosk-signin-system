@@ -98,10 +98,19 @@ def _start_dashboard():
     if project_root not in sys.path:
         sys.path.insert(0, project_root)
     from dashboard.app import app as dashboard_app
-    dashboard_app.run(host="0.0.0.0", port=5000, debug=False, use_reloader=False)
+    from waitress import serve
+    serve(dashboard_app, host="0.0.0.0", port=5000)
 
 
 if __name__ == "__main__":
+    # Build the kiosk app (which calls database.init_db(), importing
+    # werkzeug.security) fully on the main thread before starting the
+    # dashboard thread. Starting the thread first let it race the main
+    # thread to import werkzeug for the first time concurrently — harmless
+    # under a normal Python install, but PyInstaller's frozen import
+    # machinery isn't thread-safe for this, producing an intermittent
+    # "partially initialized module" ImportError on the packaged .exe.
+    kiosk_app = App()
     dashboard_thread = threading.Thread(target=_start_dashboard, daemon=True)
     dashboard_thread.start()
-    App().run()
+    kiosk_app.run()

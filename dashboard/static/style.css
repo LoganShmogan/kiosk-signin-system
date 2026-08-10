@@ -585,3 +585,244 @@ body.login-page {
     background: #c0392b;
     margin-left: auto;
 }
+
+/* ── Sign In / Out page ── */
+.signin-search-results {
+    position: absolute;
+    top: 100%;
+    left: 0;
+    right: 0;
+    background: white;
+    border: 1px solid #ccc;
+    border-top: none;
+    max-height: 220px;
+    overflow-y: auto;
+    z-index: 20;
+    display: none;
+}
+
+.signin-search-result {
+    padding: 8px 12px;
+    font-size: 14px;
+    cursor: pointer;
+}
+
+.signin-search-result:hover {
+    background: #f5f3ee;
+}
+
+.signin-selected-list {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+}
+
+.signin-chip {
+    background: #edf8f1;
+    border: 1px solid #27ae60;
+    color: #1a7a42;
+    padding: 5px 6px 5px 12px;
+    font-size: 13px;
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+}
+
+.signin-chip-remove {
+    color: #c0392b;
+    text-decoration: none;
+    font-weight: bold;
+    padding: 0 4px;
+}
+
+.signin-direction-row {
+    display: flex;
+    gap: 10px;
+}
+
+.signin-dir-btn {
+    flex: 1;
+    padding: 16px;
+    font-size: 18px;
+    font-weight: bold;
+    border: none;
+    cursor: pointer;
+    background: #ccc;
+    color: white;
+}
+
+.signin-dir-btn.signin-dir-in.active {
+    background: #27ae60;
+}
+
+.signin-dir-btn.signin-dir-out.active {
+    background: #c0392b;
+}
+
+.signature-pad {
+    width: 100%;
+    max-width: 500px;
+    height: 180px;
+    border: 1px solid #ccc;
+    background: white;
+    touch-action: none;
+    display: block;
+}
+
+.signin-modal-overlay {
+    position: fixed;
+    inset: 0;
+    background: rgba(0, 0, 0, 0.5);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    z-index: 100;
+}
+
+.signin-modal-box {
+    background: white;
+    border: 2px solid #c0392b;
+    padding: 24px 28px;
+    max-width: 440px;
+    width: 90%;
+}
+
+.signin-modal-box h2 {
+    color: #c0392b;
+    margin-bottom: 12px;
+}
+
+.signin-modal-box p {
+    margin-bottom: 10px;
+    font-size: 14px;
+}
+
+/* ── Mobile nav toggle (hidden on desktop) ── */
+.nav-toggle {
+    display: none;
+    color: white;
+    font-size: 22px;
+    cursor: pointer;
+    margin-left: auto;
+    padding: 0 4px;
+}
+
+/* ── Responsive layout ── */
+@media (max-width: 900px) {
+    .stat-grid {
+        grid-template-columns: repeat(2, 1fr);
+    }
+
+    .chart-grid,
+    .form-grid,
+    .form-columns {
+        grid-template-columns: 1fr;
+    }
+}
+
+@media (max-width: 768px) {
+    header {
+        flex-wrap: wrap;
+        height: auto;
+        padding: 10px 16px;
+        row-gap: 8px;
+    }
+
+    header .site-title {
+        flex: 1;
+    }
+
+    .nav-toggle {
+        display: block;
+    }
+
+    header nav {
+        display: none;
+        flex-direction: column;
+        width: 100%;
+        gap: 0;
+    }
+
+    header nav.open {
+        display: flex;
+    }
+
+    header nav a {
+        border-left: none;
+        border-top: 1px solid rgba(255, 255, 255, 0.15);
+        line-height: 44px;
+        padding: 0 8px;
+    }
+
+    header .logout-link {
+        margin-left: 0;
+        order: 3;
+    }
+
+    .content {
+        padding: 14px;
+    }
+
+    .stat-grid {
+        grid-template-columns: 1fr 1fr;
+        gap: 10px;
+    }
+
+    .stat-card .value {
+        font-size: 28px;
+    }
+
+    .table-wrap {
+        overflow-x: auto;
+        -webkit-overflow-scrolling: touch;
+    }
+
+    table {
+        min-width: 560px;
+    }
+
+    .filter-form {
+        flex-direction: column;
+        align-items: stretch;
+    }
+
+    .form-actions {
+        flex-wrap: wrap;
+    }
+
+    .btn-danger {
+        margin-left: 0;
+    }
+
+    .export-grid {
+        grid-template-columns: 1fr;
+    }
+
+    .type-tabs {
+        flex-wrap: wrap;
+    }
+
+    .signin-direction-row {
+        flex-direction: column;
+    }
+
+    .login-box {
+        width: 90%;
+        max-width: 360px;
+        padding: 32px 24px;
+    }
+}
+
+@media (max-width: 480px) {
+    .stat-grid {
+        grid-template-columns: 1fr;
+    }
+
+    header .site-title {
+        font-size: 15px;
+    }
+
+    .page-title {
+        font-size: 18px;
+    }
+}

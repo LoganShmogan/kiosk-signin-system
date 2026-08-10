@@ -1,0 +1,72 @@
+{% extends 'base.html' %}
+{% block title %}Sign In / Out — Kiosk Sign-In{% endblock %}
+
+{% block content %}
+<h1 class="page-title">Sign In / Out</h1>
+<p class="page-subtitle">Search for a member or staff member, select who you're signing, then choose IN or OUT.</p>
+
+<div class="form-card">
+    <h2>1. Find People</h2>
+    <div class="type-tabs" id="signin-type-tabs">
+        <a href="#" class="type-tab active" data-type="member">Members</a>
+        <a href="#" class="type-tab" data-type="staff">Staff</a>
+    </div>
+    <div class="form-group" style="position:relative">
+        <label>Search by name</label>
+        <input type="text" id="signin-search" autocomplete="off" placeholder="Start typing a name…">
+        <div id="signin-search-results" class="signin-search-results"></div>
+    </div>
+
+    <div class="form-group">
+        <label>Selected</label>
+        <div id="signin-selected" class="signin-selected-list">
+            <p class="empty-state" id="signin-selected-empty">No one selected yet.</p>
+        </div>
+    </div>
+</div>
+
+<div class="form-card" id="signin-details-card" style="display:none">
+    <h2>2. Sign In / Out</h2>
+
+    <div class="form-group">
+        <label>Direction</label>
+        <div class="signin-direction-row">
+            <button type="button" class="signin-dir-btn signin-dir-in active" data-dir="IN">IN</button>
+            <button type="button" class="signin-dir-btn signin-dir-out" data-dir="OUT">OUT</button>
+        </div>
+    </div>
+
+    <div class="form-group">
+        <label>Notes (optional)</label>
+        <textarea id="signin-notes" rows="3" placeholder="e.g. Activity details, pickup notes"></textarea>
+    </div>
+
+    <div class="form-group">
+        <label>Signature (optional)</label>
+        <canvas id="signin-signature" width="500" height="180" class="signature-pad"></canvas>
+        <button type="button" class="btn btn-secondary btn-small" id="signin-clear-sig" style="margin-top:8px;align-self:flex-start">Clear Signature</button>
+    </div>
+
+    <div class="form-actions">
+        <button type="button" class="btn" id="signin-submit-btn">Submit</button>
+    </div>
+</div>
+
+<form method="POST" action="{{ url_for('signin') }}" id="signin-form" style="display:none">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+    <input type="hidden" name="direction" id="signin-direction-field" value="IN">
+    <input type="hidden" name="notes" id="signin-notes-field">
+    <input type="hidden" name="signature_data" id="signin-signature-field">
+    <div id="signin-member-ids-fields"></div>
+</form>
+
+<div id="signin-alert-modal" class="signin-modal-overlay" style="display:none">
+    <div class="signin-modal-box">
+        <h2>Alert</h2>
+        <div id="signin-alert-messages"></div>
+        <button type="button" class="btn" id="signin-alert-dismiss">Continue</button>
+    </div>
+</div>
+
+<script src="{{ url_for('static', filename='signin.js') }}"></script>
+{% endblock %}

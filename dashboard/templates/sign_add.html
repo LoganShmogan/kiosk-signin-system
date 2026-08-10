@@ -1,0 +1,29 @@
+{% extends 'base.html' %}
+{% block title %}Add Sign-{{ 'In' if direction == 'IN' else 'Out' }} Time — Kiosk Sign-In{% endblock %}
+
+{% block content %}
+<div class="page-header-row">
+    <h1 class="page-title">Add Sign-{{ 'In' if direction == 'IN' else 'Out' }} Time</h1>
+    <div class="header-actions">
+        <a href="{{ url_for('logs') }}" class="btn btn-secondary">Back to logs</a>
+    </div>
+</div>
+
+<div class="form-card">
+    <h2>{{ person.first_name }} {{ person.last_name }}</h2>
+    <p class="page-subtitle">No {{ 'sign-in' if direction == 'IN' else 'sign-out' }} record for this visit yet — add one below.</p>
+
+    <form method="POST" action="{{ url_for('sign_add') }}">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+        <input type="hidden" name="member_id" value="{{ person.id }}">
+        <input type="hidden" name="direction" value="{{ direction }}">
+        <div class="form-group">
+            <label>{{ 'Sign-in' if direction == 'IN' else 'Sign-out' }} date &amp; time</label>
+            <input type="datetime-local" name="timestamp"
+                   value="{{ default_date }}T09:00" required>
+        </div>
+        <button type="submit" class="btn">Save</button>
+        <a href="{{ url_for('logs') }}" class="btn btn-secondary">Cancel</a>
+    </form>
+</div>
+{% endblock %}

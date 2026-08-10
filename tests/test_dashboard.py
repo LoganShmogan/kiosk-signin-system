@@ -22,9 +22,11 @@ def db(tmp_path, monkeypatch):
 
 @pytest.fixture
 def client(db, monkeypatch):
-    from dashboard.app import app, get_conn as _orig_get_conn
+    from dashboard.app import app, limiter, get_conn as _orig_get_conn
     monkeypatch.setattr("dashboard.app.DB_PATH", db_module.DB_PATH)
     app.config["TESTING"] = True
+    app.config["WTF_CSRF_ENABLED"] = False
+    limiter.enabled = False
     with app.test_client() as c:
         yield c
 
@@ -32,7 +34,19 @@ def client(db, monkeypatch):
 @pytest.fixture
 def auth_client(client):
     with client.session_transaction() as sess:
-        sess["logged_in"] = True
+        sess["user_id"] = 1
+        sess["role"] = "admin"
+        sess["name"] = "admin"
+    return client
+
+
+@pytest.fixture
+def staff_client(client, db):
+    user_id = db_module.create_dashboard_user("Jamie", "2468", "staff")
+    with client.session_transaction() as sess:
+        sess["user_id"] = user_id
+        sess["role"] = "staff"
+        sess["name"] = "Jamie"
     return client
 
 
@@ -120,6 +134,81 @@ def test_logs_filter_excludes_signed_out(auth_client, db):
     assert b"Jane" not in resp.data
 
 
+def test_logs_search_filters_by_name(auth_client, db):
+    mid = db.upsert_member(_member(first_name="Findme", last_name="Person"))
+    db.record_sign(mid, "IN")
+    other = db.upsert_member(_member(first_name="Other", last_name="Person"))
+    db.record_sign(other, "IN")
+    resp = auth_client.get("/logs?search=Findme")
+    assert b"Findme" in resp.data
+    assert b"Other Person" not in resp.data
+
+
+def test_logs_shows_edit_link_for_existing_sign(auth_client, db):
+    mid = db.upsert_member(_member())
+    db.record_sign(mid, "IN")
+    resp = auth_client.get("/logs")
+    assert b"/logs/sign/" in resp.data
+    assert b"/edit" in resp.data
+
+
+def test_logs_shows_add_link_for_missing_sign(auth_client, db):
+    mid = db.upsert_member(_member())
+    db.record_sign(mid, "IN")
+    resp = auth_client.get("/logs")
+    assert b"/logs/sign/add" in resp.data
+
+
+def test_sign_edit_updates_timestamp(auth_client, db):
+    mid = db.upsert_member(_member())
+    db.record_sign(mid, "IN")
+    sign_id = db.get_last_sign(mid)["id"]
+    resp = auth_client.post(
+        f"/logs/sign/{sign_id}/edit", data={"timestamp": "2026-01-01T09:30"}
+    )
+    assert resp.status_code == 302
+    assert db.get_sign(sign_id)["timestamp"] == "2026-01-01 09:30:00"
+
+
+def test_sign_edit_invalid_timestamp_flashes_error(auth_client, db):
+    mid = db.upsert_member(_member())
+    db.record_sign(mid, "IN")
+    sign_id = db.get_last_sign(mid)["id"]
+    resp = auth_client.post(
+        f"/logs/sign/{sign_id}/edit", data={"timestamp": "not-a-date"}, follow_redirects=True
+    )
+    assert b"Enter a valid date and time" in resp.data
+
+
+def test_sign_edit_not_found(auth_client):
+    resp = auth_client.get("/logs/sign/999999/edit", follow_redirects=True)
+    assert b"Sign-in record not found" in resp.data
+
+
+def test_sign_add_creates_record(auth_client, db):
+    from datetime import datetime
+    mid = db.upsert_member(_member())
+    today = datetime.now().strftime("%Y-%m-%d")
+    resp = auth_client.post(
+        "/logs/sign/add",
+        data={"member_id": str(mid), "direction": "IN", "timestamp": f"{today}T08:00"},
+    )
+    assert resp.status_code == 302
+    assert db.get_allowed_direction(mid) == "OUT"
+
+
+def test_sign_add_invalid_request_flashes_error(auth_client):
+    resp = auth_client.get("/logs/sign/add", follow_redirects=True)
+    assert b"Invalid request" in resp.data
+
+
+def test_sign_add_person_not_found(auth_client):
+    resp = auth_client.get(
+        "/logs/sign/add?member_id=999999&direction=IN", follow_redirects=True
+    )
+    assert b"Person not found" in resp.data
+
+
 # ── Audit ─────────────────────────────────────────────────────────────────────
 
 def test_audit_page_loads(auth_client):
@@ -192,6 +281,11 @@ def test_new_staff_form_loads(auth_client):
     assert resp.status_code == 200
     assert b"Staff Details" in resp.data
     assert b"Caregiver" not in resp.data
+
+
+def test_new_staff_form_renders_person_type_hidden_field(auth_client):
+    resp = auth_client.get("/people/new?type=staff")
+    assert b'name="person_type" value="staff"' in resp.data
 
 
 def test_create_member(auth_client, db):
@@ -366,19 +460,13 @@ def test_delete_nonexistent_person_redirects(auth_client):
 def test_exports_page_loads(auth_client):
     resp = auth_client.get("/exports")
     assert resp.status_code == 200
-    assert b"Member Signing Sheets" in resp.data
     assert b"Staff Signing Sheets" in resp.data
+    assert b"Export a Person's Sign-ins" in resp.data
 
 
-def test_export_members_returns_xlsx(auth_client, db):
-    mid = db.upsert_member(_member())
-    db.record_sign(mid, "IN")
-    from datetime import datetime
-    today = datetime.now().strftime("%Y-%m-%d")
-    resp = auth_client.get(f"/export/members?date_from={today}&date_to={today}")
-    assert resp.status_code == 200
-    assert resp.content_type == "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-    assert b"PK" == resp.data[:2]
+def test_export_members_route_removed(auth_client):
+    resp = auth_client.get("/export/members")
+    assert resp.status_code == 404
 
 
 def test_export_staff_returns_xlsx(auth_client, db):
@@ -392,26 +480,49 @@ def test_export_staff_returns_xlsx(auth_client, db):
     assert b"PK" == resp.data[:2]
 
 
-def test_export_members_missing_params(auth_client):
-    resp = auth_client.get("/export/members")
-    assert resp.status_code == 400
-
-
 def test_export_staff_missing_params(auth_client):
     resp = auth_client.get("/export/staff")
     assert resp.status_code == 400
-
-
-def test_export_members_empty_range(auth_client):
-    resp = auth_client.get("/export/members?date_from=2000-01-01&date_to=2000-01-02")
-    assert resp.status_code == 200
-    assert b"PK" == resp.data[:2]
 
 
 def test_export_staff_empty_range(auth_client):
     resp = auth_client.get("/export/staff?date_from=2000-01-01&date_to=2000-01-02")
     assert resp.status_code == 200
     assert b"PK" == resp.data[:2]
+
+
+def test_export_staff_single_person_by_id(auth_client, db):
+    sid = db.upsert_member(_staff())
+    db.record_sign(sid, "IN")
+    resp = auth_client.get(f"/export/staff?person_id={sid}")
+    assert resp.status_code == 200
+    assert resp.headers["Content-Disposition"].startswith("attachment")
+    assert "KioskSignIn_" in resp.headers["Content-Disposition"]
+
+
+def test_export_staff_person_id_not_staff_flashes_error(auth_client, db):
+    mid = db.upsert_member(_member())
+    resp = auth_client.get(f"/export/staff?person_id={mid}", follow_redirects=True)
+    assert b"Staff member not found" in resp.data
+
+
+def test_export_person_downloads_member(auth_client, db):
+    mid = db.upsert_member(_member())
+    db.record_sign(mid, "IN")
+    resp = auth_client.get(f"/export/person?person_id={mid}")
+    assert resp.status_code == 200
+    assert resp.content_type == "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+
+
+def test_export_person_no_records_flashes_error(auth_client, db):
+    mid = db.upsert_member(_member())
+    resp = auth_client.get(f"/export/person?person_id={mid}", follow_redirects=True)
+    assert b"No sign-in records found" in resp.data
+
+
+def test_export_person_no_person_id_flashes_error(auth_client):
+    resp = auth_client.get("/export/person", follow_redirects=True)
+    assert b"Select a person to export" in resp.data
 
 
 # ── Last signature ─────────────────────────────────────────────────────────────
@@ -453,3 +564,259 @@ def test_nav_has_all_links(auth_client):
     assert b"People" in resp.data
     assert b"Audit Log" in resp.data
     assert b"Exports" in resp.data
+
+
+# ── CSRF protection ───────────────────────────────────────────────────────────
+# The `client`/`auth_client` fixtures disable WTF_CSRF_ENABLED so the rest of
+# the suite can POST without wiring up real tokens. These tests turn CSRF
+# enforcement back on for a single request each, to make sure protection is
+# actually wired up rather than the fixture silently masking a gap.
+
+def test_login_form_renders_csrf_token(client):
+    resp = client.get("/login")
+    assert b'name="csrf_token"' in resp.data
+
+
+def test_alerts_form_renders_csrf_token(auth_client):
+    resp = auth_client.get("/alerts")
+    assert b'name="csrf_token"' in resp.data
+
+
+def test_person_form_renders_csrf_token(auth_client):
+    resp = auth_client.get("/people/new")
+    assert b'name="csrf_token"' in resp.data
+
+
+def test_post_without_csrf_token_rejected_when_enabled(client):
+    from dashboard.app import app
+    app.config["WTF_CSRF_ENABLED"] = True
+    try:
+        resp = client.post("/login", data={"username": "admin", "password": "1234"})
+        assert resp.status_code == 400
+    finally:
+        app.config["WTF_CSRF_ENABLED"] = False
+
+
+def test_post_with_csrf_token_from_rendered_form_succeeds(client):
+    from dashboard.app import app
+    app.config["WTF_CSRF_ENABLED"] = True
+    try:
+        get_resp = client.get("/login")
+        token = get_resp.data.decode().split('name="csrf_token" value="')[1].split('"')[0]
+        resp = client.post(
+            "/login",
+            data={"username": "admin", "password": "1234", "csrf_token": token},
+        )
+        assert resp.status_code == 302
+        assert "/dashboard" in resp.headers["Location"]
+    finally:
+        app.config["WTF_CSRF_ENABLED"] = False
+
+
+# ── _parse_signature ─────────────────────────────────────────────────────────
+
+def test_parse_signature_empty_returns_none():
+    from dashboard.app import _parse_signature
+    assert _parse_signature("") is None
+    assert _parse_signature(None) is None
+
+
+def test_parse_signature_valid_strokes():
+    from dashboard.app import _parse_signature
+    raw = '[[1,2,3,4],[5,6,7,8]]'
+    result = _parse_signature(raw)
+    assert result == str([(1, 2, 3, 4), (5, 6, 7, 8)]).encode()
+
+
+def test_parse_signature_not_a_list_raises():
+    from dashboard.app import _parse_signature
+    with pytest.raises(ValueError):
+        _parse_signature('{"not": "a list"}')
+
+
+def test_parse_signature_too_many_strokes_raises():
+    from dashboard.app import _parse_signature
+    import json as _json
+    raw = _json.dumps([[1, 2, 3, 4]] * 20001)
+    with pytest.raises(ValueError):
+        _parse_signature(raw)
+
+
+def test_parse_signature_bad_segment_shape_raises():
+    from dashboard.app import _parse_signature
+    with pytest.raises(ValueError):
+        _parse_signature('[[1,2,3]]')
+
+
+def test_parse_signature_non_numeric_segment_raises():
+    from dashboard.app import _parse_signature
+    with pytest.raises(ValueError):
+        _parse_signature('[[1,2,3,"x"]]')
+
+
+# ── Web sign-in / out page ───────────────────────────────────────────────────
+
+def test_signin_page_loads_for_admin(auth_client):
+    resp = auth_client.get("/signin")
+    assert resp.status_code == 200
+    assert b"Sign In / Out" in resp.data
+
+
+def test_signin_page_loads_for_staff(staff_client):
+    resp = staff_client.get("/signin")
+    assert resp.status_code == 200
+
+
+def test_signin_requires_login(client):
+    resp = client.get("/signin")
+    assert resp.status_code == 302
+    assert "/login" in resp.headers["Location"]
+
+
+def test_signin_post_records_sign_in(auth_client, db):
+    mid = db.upsert_member(_member())
+    resp = auth_client.post("/signin", data={"member_ids": [str(mid)], "direction": "IN"})
+    assert resp.status_code == 302
+    assert db.get_allowed_direction(mid) == "OUT"
+
+
+def test_signin_post_no_members_selected_flashes_error(auth_client):
+    resp = auth_client.post("/signin", data={"direction": "IN"}, follow_redirects=True)
+    assert b"Select at least one person" in resp.data
+
+
+def test_signin_post_invalid_direction_flashes_error(auth_client, db):
+    mid = db.upsert_member(_member())
+    resp = auth_client.post(
+        "/signin", data={"member_ids": [str(mid)], "direction": "SIDEWAYS"}, follow_redirects=True
+    )
+    assert b"Choose a direction" in resp.data
+
+
+def test_signin_post_blocked_direction_flashes_skip_message(auth_client, db):
+    mid = db.upsert_member(_member())
+    db.record_sign(mid, "IN")
+    resp = auth_client.post(
+        "/signin", data={"member_ids": [str(mid)], "direction": "IN"}, follow_redirects=True
+    )
+    assert b"need to sign" in resp.data
+
+
+def test_signin_search_members(auth_client, db):
+    db.upsert_member(_member(first_name="Unique", last_name="Searchable"))
+    resp = auth_client.get("/signin/search?type=member&q=Unique")
+    data = resp.get_json()
+    assert any(r["name"] == "Unique Searchable" for r in data["results"])
+
+
+def test_signin_search_staff(auth_client, db):
+    db.upsert_member(_staff(first_name="StaffUnique"))
+    resp = auth_client.get("/signin/search?type=staff&q=StaffUnique")
+    data = resp.get_json()
+    assert any("StaffUnique" in r["name"] for r in data["results"])
+
+
+def test_signin_search_empty_query_returns_no_results(auth_client):
+    resp = auth_client.get("/signin/search?type=member&q=")
+    assert resp.get_json() == {"results": []}
+
+
+def test_signin_alerts_returns_matching_alerts(auth_client, db):
+    mid = db.upsert_member(_member())
+    db.create_alert("all", None, "Reminder for everyone")
+    resp = auth_client.get(f"/signin/alerts?member_ids={mid}")
+    data = resp.get_json()
+    assert any(a["message"] == "Reminder for everyone" for a in data["alerts"])
+
+
+def test_signin_alerts_no_ids_returns_empty(auth_client):
+    resp = auth_client.get("/signin/alerts?member_ids=")
+    assert resp.get_json() == {"alerts": []}
+
+
+# ── Status page ("Who's Here") ───────────────────────────────────────────────
+
+def test_status_page_loads_for_staff(staff_client):
+    resp = staff_client.get("/status")
+    assert resp.status_code == 200
+    assert b"Who's Here" in resp.data
+
+
+def test_status_page_loads_for_admin(auth_client):
+    resp = auth_client.get("/status")
+    assert resp.status_code == 200
+
+
+def test_status_requires_login(client):
+    resp = client.get("/status")
+    assert resp.status_code == 302
+    assert "/login" in resp.headers["Location"]
+
+
+def test_status_shows_currently_signed_in(auth_client, db):
+    mid = db.upsert_member(_member(first_name="Present", last_name="Now"))
+    db.record_sign(mid, "IN")
+    resp = auth_client.get("/status")
+    assert b"Present Now" in resp.data
+
+
+# ── Dashboard users ───────────────────────────────────────────────────────────
+
+def test_dashboard_users_page_admin_only(auth_client):
+    resp = auth_client.get("/dashboard-users")
+    assert resp.status_code == 200
+    assert b"Dashboard Users" in resp.data
+
+
+def test_dashboard_users_page_blocked_for_staff(staff_client):
+    resp = staff_client.get("/dashboard-users", follow_redirects=True)
+    assert b"Admin access required" in resp.data
+
+
+def test_dashboard_user_new_creates_user(auth_client, db):
+    resp = auth_client.post(
+        "/dashboard-users/new", data={"name": "NewStaffer", "pin": "1111", "role": "staff"}
+    )
+    assert resp.status_code == 302
+    assert db.check_dashboard_login("NewStaffer", "1111") is not None
+
+
+def test_dashboard_user_new_duplicate_name_flashes_error(auth_client, db):
+    db.create_dashboard_user("Dup", "1111", "staff")
+    resp = auth_client.post(
+        "/dashboard-users/new", data={"name": "Dup", "pin": "2222", "role": "staff"},
+        follow_redirects=True,
+    )
+    assert b"already exists" in resp.data
+
+
+def test_dashboard_user_new_missing_fields_flashes_error(auth_client):
+    resp = auth_client.post("/dashboard-users/new", data={"name": "", "pin": ""}, follow_redirects=True)
+    assert b"required" in resp.data
+
+
+def test_dashboard_user_new_invalid_role_defaults_to_staff(auth_client, db):
+    auth_client.post(
+        "/dashboard-users/new", data={"name": "WeirdRole", "pin": "1234", "role": "superuser"}
+    )
+    user = db.check_dashboard_login("WeirdRole", "1234")
+    assert user["role"] == "staff"
+
+
+def test_dashboard_user_delete_removes_user(auth_client, db):
+    uid = db.create_dashboard_user("ToDelete", "1234", "staff")
+    resp = auth_client.post(f"/dashboard-users/{uid}/delete")
+    assert resp.status_code == 302
+    assert db.get_dashboard_user(uid) is None
+
+
+def test_dashboard_user_delete_blocks_last_admin(auth_client, db):
+    admin_id = db.check_dashboard_login("admin", "1234")["id"]
+    resp = auth_client.post(f"/dashboard-users/{admin_id}/delete", follow_redirects=True)
+    assert b"Cannot delete the last remaining admin" in resp.data
+    assert db.get_dashboard_user(admin_id) is not None
+
+
+def test_dashboard_user_delete_not_found(auth_client):
+    resp = auth_client.post("/dashboard-users/999999/delete", follow_redirects=True)
+    assert b"not found" in resp.data

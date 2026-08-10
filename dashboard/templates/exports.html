@@ -7,32 +7,25 @@
 
 <div class="export-grid">
     <div class="export-card">
-        <h2>Member Signing Sheets</h2>
-        <p>Export sign-in/out records for members (children) within a date range. Includes AM/PM sessions and signatures.</p>
-        <form method="GET" action="{{ url_for('export_members') }}" class="export-form">
-            <div class="form-group">
-                <label>From date</label>
-                <input type="date" name="date_from" value="{{ week_start }}" required>
-            </div>
-            <div class="form-group">
-                <label>To date</label>
-                <input type="date" name="date_to" value="{{ today }}" required>
-            </div>
-            <button type="submit" class="btn">Download Members Export</button>
-        </form>
-    </div>
-
-    <div class="export-card">
         <h2>Staff Signing Sheets</h2>
-        <p>Export staff sign-in/out records within a date range. Every sign-in/out session is its own row with a duration, plus a total time in the centre for each staff member.</p>
+        <p>Export sign-in/out records for all staff within a date range, or pick one staff member to export just their history (leave the dates blank for their entire history). Every sign-in/out session is its own row with a duration, plus a total time in the centre for each staff member.</p>
         <form method="GET" action="{{ url_for('export_staff') }}" class="export-form">
             <div class="form-group">
-                <label>From date</label>
-                <input type="date" name="date_from" value="{{ week_start }}" required>
+                <label>Staff member</label>
+                <select name="person_id">
+                    <option value="">All Staff</option>
+                    {% for s in staff %}
+                    <option value="{{ s.id }}">{{ s.first_name }} {{ s.last_name }}</option>
+                    {% endfor %}
+                </select>
             </div>
             <div class="form-group">
-                <label>To date</label>
-                <input type="date" name="date_to" value="{{ today }}" required>
+                <label>From date (required for "All Staff")</label>
+                <input type="date" name="date_from" value="{{ week_start }}">
+            </div>
+            <div class="form-group">
+                <label>To date (required for "All Staff")</label>
+                <input type="date" name="date_to" value="{{ today }}">
             </div>
             <button type="submit" class="btn">Download Staff Export</button>
         </form>

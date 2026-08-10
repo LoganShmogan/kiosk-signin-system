@@ -28,20 +28,35 @@ python kiosk_signin/app.py
 
 This starts both the kiosk GUI and the web dashboard on port 5000.
 
+Set `DASHBOARD_SECRET_KEY` before running so dashboard sessions survive restarts (otherwise a random key is generated each run and everyone is logged out):
+
+```
+export DASHBOARD_SECRET_KEY=some-long-random-string   # Linux/macOS
+$env:DASHBOARD_SECRET_KEY="some-long-random-string"    # Windows PowerShell
+```
+
+Alternatively, copy `.env.example` to `.env` and set it there -- it's loaded automatically via `python-dotenv` if present, and `.env` is gitignored so it's never committed.
+
 ### Dependencies
 
 The `requirements.txt` file lists all Python dependencies:
 
-| Package      | Purpose                                          |
-|-------------|--------------------------------------------------|
-| Flask        | Web dashboard framework                          |
-| openpyxl     | Excel (.xlsx) file generation                    |
-| Pillow       | Image processing for signature rendering         |
-| pytest       | Test framework                                   |
-| tkreload     | Live-reload for Tkinter during development       |
-| watchdog     | File system monitoring (used by tkreload)        |
-| click        | CLI framework (Flask dependency)                 |
-| rich         | Terminal formatting                              |
+| Package        | Purpose                                          |
+|----------------|--------------------------------------------------|
+| Flask          | Web dashboard framework                          |
+| openpyxl       | Excel (.xlsx) file generation                    |
+| Pillow         | Image processing for signature rendering         |
+| pytest         | Test framework                                   |
+| pytest-cov     | Test coverage reporting                          |
+| coverage       | Coverage measurement (used by pytest-cov)        |
+| tkreload       | Live-reload for Tkinter during development       |
+| watchdog       | File system monitoring (used by tkreload)        |
+| click          | CLI framework (Flask dependency)                 |
+| rich           | Terminal formatting                              |
+| waitress       | Production WSGI server for the dashboard         |
+| Flask-WTF      | CSRF protection for dashboard forms              |
+| Flask-Limiter  | Login rate limiting                              |
+| python-dotenv  | Optional `.env` file loading for local config     |
 
 ## PyInstaller Builds
 
@@ -58,6 +73,12 @@ pyinstaller --onefile \
     --add-data "dashboard/app.py:dashboard" \
     --add-data "kiosk_signin/export_util.py:kiosk_signin" \
     --hidden-import flask \
+    --hidden-import flask_wtf \
+    --hidden-import flask_limiter \
+    --hidden-import dotenv \
+    --hidden-import waitress \
+    --hidden-import werkzeug \
+    --collect-submodules werkzeug \
     kiosk_signin/app.py \
     --name KioskSignIn
 ```
@@ -65,8 +86,9 @@ pyinstaller --onefile \
 ### Key Options
 
 - `--onefile` -- Produces a single executable file rather than a directory of files. At runtime, the executable extracts its contents to a temporary directory.
-- `--add-data` -- Bundles non-Python files (HTML templates, CSS, static assets) into the executable. The format is `source:destination` (colon on Linux, semicolon on Windows).
-- `--hidden-import flask` -- Tells PyInstaller to include Flask, which it might not detect because the import happens inside a function (lazy import in `app.py`).
+- `--add-data` -- Bundles non-Python files (HTML templates, CSS, static assets) into the executable. The format is `source:destination` (colon on Linux, semicolon on Windows). Notably, `dashboard/app.py` itself is bundled this way rather than being statically imported -- PyInstaller copies it as a raw file and it's `exec`'d at runtime via a lazy `from dashboard.app import app`, not analysed for imports ahead of time.
+- `--hidden-import` -- Because `dashboard/app.py` is bundled as data rather than analysed, **none** of its imports are auto-detected by PyInstaller, no matter how they're written (top-level or lazy). Every package it imports -- `flask`, `flask_wtf`, `flask_limiter`, `dotenv` (the import name for `python-dotenv`), and `waitress` -- has to be listed explicitly, or the bundled `.exe` will start fine but the background dashboard thread will silently fail with `ModuleNotFoundError` the moment it tries to import `dashboard.app` (silently, because it's a daemon thread with no UI to report the crash to -- the kiosk itself keeps running normally). Any new dependency added to `dashboard/app.py` in the future needs the same treatment.
+- `--collect-submodules werkzeug` -- Werkzeug (Flask's underlying WSGI library) uses lazy, `__getattr__`-based imports between its own submodules (e.g. `werkzeug.utils` reaching into `werkzeug.wsgi` for `wrap_file`). On a Windows kiosk build this can surface as `ImportError: cannot import name 'wrap_file' from partially initialized module 'werkzeug.wsgi' (most likely due to a circular import)` the moment the bundled `.exe` tries to import `werkzeug.security` for password hashing -- PyInstaller's frozen import machinery can resolve Werkzeug's internal submodule graph in a different order than a normal on-disk install, catching it mid-initialization. `--collect-submodules werkzeug` forces PyInstaller to bundle all of Werkzeug's submodules together up front rather than discovering them piecemeal, which avoids the partial-initialization ordering issue. This is specific to PyInstaller's Windows-frozen import order, so it can only be verified end-to-end on an actual Windows build of the `.exe`, not in CI or a Linux dev environment.
 
 ### Runtime Path Handling
 
@@ -166,4 +188,10 @@ The primary deployment target is a Windows 10 touchscreen PC (an HP kiosk unit) 
 
 ### Network Access
 
-The dashboard is served on `0.0.0.0:5000`, making it accessible from any device on the same network. This allows administrators to access the dashboard from their own computer or phone while the kiosk remains at the sign-in point.
+The dashboard is served on `0.0.0.0:5000` by Waitress (a production WSGI server -- see [11-threading-and-concurrency.md](11-threading-and-concurrency.md)), making it accessible from any device on the same network. This allows administrators and staff to access the dashboard from their own computer or phone while the kiosk remains at the sign-in point, and the sign-in/out page is mobile-friendly for that reason.
+
+### Internet Access via a Reverse Tunnel
+
+The dashboard can additionally be exposed to the internet at a URL like `https://kiosk-dashboard.example.com` through a tunnel tool (e.g. Cloudflare Tunnel's `cloudflared`), which handles HTTPS/TLS termination at its own edge -- no certificates or reverse proxy need to be managed on the kiosk itself. Because of this, the dashboard's own hardening focuses on what's still its responsibility: a real (non-hardcoded) secret key, hashed multi-user logins, CSRF protection, login rate limiting, and (only in a deployment reachable exclusively over HTTPS) cookies marked `Secure`. See [09-authentication-and-security.md](09-authentication-and-security.md) for the full picture.
+
+**Deployment note:** because the secret key source and session format changed as part of this hardening, every existing browser session is invalidated the first time this version runs -- everyone (including the admin) needs to log in again afterwards. This is expected, not a bug.

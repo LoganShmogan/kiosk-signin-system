@@ -13,6 +13,8 @@
 </div>
 
 <form method="POST" action="{{ url_for('person_new', type=person_type) if is_new else url_for('person_edit', person_id=person.id) }}">
+<input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+<input type="hidden" name="person_type" value="{{ person_type }}">
 
 {% if person_type == 'staff' %}
 {# ── Staff form (simple) ── #}
@@ -205,6 +207,7 @@
 
 <form id="delete-form" method="POST" action="{{ url_for('person_delete', person_id=person.id) }}"
       onsubmit="return confirm('Are you sure you want to delete {{ person.first_name }} {{ person.last_name }}? This cannot be undone.')">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
 </form>
 {% endif %}
 {% endblock %}

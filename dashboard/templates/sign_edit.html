@@ -1,0 +1,27 @@
+{% extends 'base.html' %}
+{% block title %}Edit Sign-{{ sign.direction.title() }} Time — Kiosk Sign-In{% endblock %}
+
+{% block content %}
+<div class="page-header-row">
+    <h1 class="page-title">Edit Sign-{{ 'In' if sign.direction == 'IN' else 'Out' }} Time</h1>
+    <div class="header-actions">
+        <a href="{{ url_for('logs') }}" class="btn btn-secondary">Back to logs</a>
+    </div>
+</div>
+
+<div class="form-card">
+    <h2>{{ sign.first_name }} {{ sign.last_name }}</h2>
+    <p class="page-subtitle">Current: {{ sign.timestamp }}</p>
+
+    <form method="POST" action="{{ url_for('sign_edit', sign_id=sign.id) }}">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+        <div class="form-group">
+            <label>New date &amp; time</label>
+            <input type="datetime-local" name="timestamp"
+                   value="{{ sign.timestamp[:16].replace(' ', 'T') }}" required>
+        </div>
+        <button type="submit" class="btn">Save</button>
+        <a href="{{ url_for('logs') }}" class="btn btn-secondary">Cancel</a>
+    </form>
+</div>
+{% endblock %}

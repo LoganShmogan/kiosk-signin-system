@@ -5,7 +5,6 @@
 
 PAGE_BG         = "#372976"   # Deep purple — outer background / top bars
 CONTENT_BG      = "#F5F3EE"   # Cream — main content areas (Figma accurate)
-INFO_BG         = "#2a1f5e"   # Darker purple — notices panel
 
 # Entry fields
 ENT_BG          = "#FFFFFF"

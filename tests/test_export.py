@@ -45,82 +45,39 @@ def test_render_signature_returns_png_bytes_for_valid_strokes():
     assert png[:8] == b"\x89PNG\r\n\x1a\n"
 
 
-# ── _build_pupil_rows ──────────────────────────────────────────────────────────
-
-def test_build_empty():
-    assert export_util._build_pupil_rows([]) == []
+def test_render_signature_returns_none_for_empty_strokes_list():
+    assert export_util.render_signature(b"[]") is None
 
 
-def test_build_single_am_in_out():
-    signs = [
-        _sign(1, "Alice", "Brown", "IN",  "2026-01-01 08:30:00"),
-        _sign(1, "Alice", "Brown", "OUT", "2026-01-01 11:00:00"),
-    ]
-    rows = export_util._build_pupil_rows(signs)
-    assert len(rows) == 1
-    r = rows[0]
-    assert r["name"]   == "Alice Brown"
-    assert r["am_in"]  == "08:30"
-    assert r["am_out"] == "11:00"
-    assert r["pm_in"]  == ""
-    assert r["pm_out"] == ""
+def test_render_signature_returns_none_when_pil_unavailable(monkeypatch):
+    monkeypatch.setattr(export_util, "PIL_AVAILABLE", False)
+    assert export_util.render_signature(b"[(0, 0, 10, 10)]") is None
 
 
-def test_build_full_am_pm_sequence():
-    signs = [
-        _sign(1, "Alice", "Brown", "IN",  "2026-01-01 08:00:00"),
-        _sign(1, "Alice", "Brown", "OUT", "2026-01-01 11:30:00"),
-        _sign(1, "Alice", "Brown", "IN",  "2026-01-01 13:00:00"),
-        _sign(1, "Alice", "Brown", "OUT", "2026-01-01 15:00:00"),
-    ]
-    r = export_util._build_pupil_rows(signs)[0]
-    assert r["am_in"]  == "08:00"
-    assert r["am_out"] == "11:30"
-    assert r["pm_in"]  == "13:00"
-    assert r["pm_out"] == "15:00"
+def test_pil_unavailable_falls_back_when_import_fails(monkeypatch):
+    """Covers the `except ImportError: PIL_AVAILABLE = False` guard around
+    the top-of-module `from PIL import Image, ImageDraw`."""
+    import sys
+    import importlib
 
-
-def test_build_pm_only():
-    signs = [
-        _sign(1, "Alice", "Brown", "IN",  "2026-01-01 13:00:00"),
-        _sign(1, "Alice", "Brown", "OUT", "2026-01-01 15:30:00"),
-    ]
-    r = export_util._build_pupil_rows(signs)[0]
-    assert r["am_in"]  == ""
-    assert r["pm_in"]  == "13:00"
-    assert r["pm_out"] == "15:30"
-
-
-def test_build_multiple_members_sorted_by_name():
-    signs = [
-        _sign(1, "Alice", "Brown",  "IN", "2026-01-01 08:00:00"),
-        _sign(2, "Zoe",   "Adkins", "IN", "2026-01-01 08:05:00"),
-    ]
-    rows = export_util._build_pupil_rows(signs)
-    assert len(rows) == 2
-    # Sorted ascending on the full "first last" string: Alice < Zoe
-    assert rows[0]["name"] == "Alice Brown"
-    assert rows[1]["name"] == "Zoe Adkins"
-
-
-def test_build_only_first_in_and_out_per_half(db=None):
-    # Duplicate INs in the same AM window: only the first counts
-    signs = [
-        _sign(1, "Alice", "Brown", "IN",  "2026-01-01 08:00:00"),
-        _sign(1, "Alice", "Brown", "IN",  "2026-01-01 09:00:00"),
-        _sign(1, "Alice", "Brown", "OUT", "2026-01-01 11:00:00"),
-    ]
-    r = export_util._build_pupil_rows(signs)[0]
-    assert r["am_in"] == "08:00"
-
-
-def test_build_missing_timestamp_handled():
-    signs = [_sign(1, "Bob", "Jones", "IN", "")]
-    rows = export_util._build_pupil_rows(signs)
-    assert len(rows) == 1
+    original_pil = sys.modules.get("PIL")
+    monkeypatch.setitem(sys.modules, "PIL", None)
+    try:
+        importlib.reload(export_util)
+        assert export_util.PIL_AVAILABLE is False
+    finally:
+        if original_pil is not None:
+            sys.modules["PIL"] = original_pil
+        else:
+            sys.modules.pop("PIL", None)
+        importlib.reload(export_util)
+        assert export_util.PIL_AVAILABLE is True
 
 
 # ── generate_export ────────────────────────────────────────────────────────────
+# generate_export shares its layout with generate_staff_export (#78): one
+# worksheet per member, each holding that member's sign-in/out sessions as
+# Date | Sign In | Sign Out | Duration rows.
 
 def test_generate_export_creates_xlsx(tmp_path):
     signs = [
@@ -148,7 +105,11 @@ def test_generate_export_to_bytesio():
     assert data[:2] == b"PK"
 
 
-def test_generate_export_multiple_members(tmp_path):
+def test_generate_export_one_sheet_per_member(tmp_path):
+    """Regression test for #78: member export uses the same one-sheet-per-
+    person layout as the staff export, instead of one sheet per calendar day."""
+    import openpyxl
+
     signs = [
         _sign(1, "Alice", "Brown",  "IN",  "2026-01-01 08:00:00"),
         _sign(1, "Alice", "Brown",  "OUT", "2026-01-01 15:00:00"),
@@ -156,12 +117,14 @@ def test_generate_export_multiple_members(tmp_path):
     ]
     out = str(tmp_path / "export_multi.xlsx")
     export_util.generate_export(signs, "2026-01-01", "2026-01-01", out)
-    assert os.path.exists(out)
+
+    wb = openpyxl.load_workbook(out)
+    assert set(wb.sheetnames) == {"Alice Brown", "Bob Carter"}
 
 
-def test_generate_export_multiple_days_creates_one_sheet_per_day(tmp_path):
-    """Regression test: a multi-day range must not collapse to a single row —
-    every day with sign-in data gets its own sheet."""
+def test_generate_export_multi_day_history_stays_on_one_sheet(tmp_path):
+    """A member's sign-ins across several days stay on their one sheet, as
+    separate session rows, rather than being split across per-day sheets."""
     import openpyxl
 
     signs = [
@@ -176,26 +139,9 @@ def test_generate_export_multiple_days_creates_one_sheet_per_day(tmp_path):
     export_util.generate_export(signs, "2026-01-01", "2026-01-05", out)
 
     wb = openpyxl.load_workbook(out)
-    assert wb.sheetnames == ["2026-01-01", "2026-01-02", "2026-01-05"]
-
-    # Each day's sheet must show that day's own sign-in time, not day one's.
-    assert wb["2026-01-02"]["B4"].value == "08:45"
-    assert wb["2026-01-05"]["B4"].value == "08:15"
-
-
-def test_generate_export_single_day_still_one_sheet(tmp_path):
-    """Non-breaking check: a single-day export still produces exactly one sheet."""
-    import openpyxl
-
-    signs = [
-        _sign(1, "Alice", "Brown", "IN",  "2026-01-01 08:30:00"),
-        _sign(1, "Alice", "Brown", "OUT", "2026-01-01 15:00:00"),
-    ]
-    out = str(tmp_path / "export_single_day.xlsx")
-    export_util.generate_export(signs, "2026-01-01", "2026-01-01", out)
-
-    wb = openpyxl.load_workbook(out)
-    assert wb.sheetnames == ["2026-01-01"]
+    assert wb.sheetnames == ["Alice Brown"]
+    values = [c.value for row in wb["Alice Brown"].iter_rows() for c in row if c.value]
+    assert "08:30" in values and "08:45" in values and "08:15" in values
 
 
 def test_generate_export_empty_signs_list(tmp_path):
@@ -203,6 +149,24 @@ def test_generate_export_empty_signs_list(tmp_path):
     export_util.generate_export([], "2026-01-01", "2026-01-05", out)
     assert os.path.exists(out)
     assert os.path.getsize(out) > 0
+
+
+def test_generate_export_embeds_signature_image(tmp_path):
+    """A sign event with real stroke data must get an embedded PNG on the
+    signature row underneath its session's data row."""
+    import openpyxl
+
+    signs = [
+        _sign(1, "Alice", "Brown", "IN",  "2026-01-01 08:30:00",
+              signature=b"[(0, 0, 10, 10), (10, 10, 20, 0)]"),
+        _sign(1, "Alice", "Brown", "OUT", "2026-01-01 15:00:00"),
+    ]
+    out = str(tmp_path / "export_with_sig.xlsx")
+    export_util.generate_export(signs, "2026-01-01", "2026-01-01", out)
+
+    wb = openpyxl.load_workbook(out)
+    ws = wb["Alice Brown"]
+    assert len(ws._images) >= 1
 
 
 # ── _build_staff_sessions ──────────────────────────────────────────────────────
@@ -319,6 +283,10 @@ def test_day_month_formats_without_year():
     assert export_util._day_month("2026-06-08") == "08/06"
 
 
+def test_day_month_malformed_date_returns_original_string():
+    assert export_util._day_month("not-a-date") == "not-a-date"
+
+
 def test_year_label_single_year():
     sessions = [{"date": "2026-06-08"}, {"date": "2026-11-02"}]
     assert export_util._year_label(sessions) == "2026"
@@ -331,6 +299,33 @@ def test_year_label_spans_years():
 
 def test_year_label_empty():
     assert export_util._year_label([]) == ""
+
+
+# ── _unique_sheet_title ──────────────────────────────────────────────────────
+
+def test_unique_sheet_title_basic():
+    used = set()
+    assert export_util._unique_sheet_title("Alice Brown", used) == "Alice Brown"
+
+
+def test_unique_sheet_title_dedupes_collisions():
+    used = set()
+    first = export_util._unique_sheet_title("Alice Brown", used)
+    second = export_util._unique_sheet_title("Alice Brown", used)
+    assert first == "Alice Brown"
+    assert second == "Alice Brown (2)"
+
+
+def test_unique_sheet_title_strips_invalid_excel_characters():
+    used = set()
+    title = export_util._unique_sheet_title("A/B:C*D?E[F]G\\H", used)
+    assert not set(title) & set("[]:*?/\\")
+
+
+def test_unique_sheet_title_truncates_to_31_chars():
+    used = set()
+    title = export_util._unique_sheet_title("A" * 50, used)
+    assert len(title) <= 31
 
 
 # ── _duration_mins / _fmt_duration ────────────────────────────────────────────
@@ -360,6 +355,11 @@ def test_duration_mins_missing_finish():
 
 def test_duration_mins_both_missing():
     assert export_util._duration_mins(None, None) is None
+
+
+def test_duration_mins_malformed_timestamp_returns_none():
+    assert export_util._duration_mins(_evt("not-a-timestamp"),
+                                      _evt("2026-06-09 11:00:00")) is None
 
 
 def test_fmt_duration_hours_and_minutes():
@@ -419,6 +419,24 @@ def test_generate_staff_export_multiple_staff(tmp_path):
     assert os.path.getsize(out) > 0
 
 
+def test_generate_staff_export_one_sheet_per_staff_member(tmp_path):
+    """Regression test for #76: downloading all staff gives each staff member
+    their own worksheet, instead of one shared sheet with page breaks."""
+    import openpyxl
+
+    signs = [
+        _staff_sign(1, "Alice", "Smith", "IN",  "2026-06-09 08:00:00", role="Manager"),
+        _staff_sign(1, "Alice", "Smith", "OUT", "2026-06-09 17:00:00", role="Manager"),
+        _staff_sign(2, "Bob",   "Jones", "IN",  "2026-06-09 09:00:00", role=""),
+        _staff_sign(2, "Bob",   "Jones", "OUT", "2026-06-09 17:00:00", role=""),
+    ]
+    out = str(tmp_path / "staff_sheets.xlsx")
+    export_util.generate_staff_export(signs, "2026-06-09", "2026-06-13", out)
+
+    wb = openpyxl.load_workbook(out)
+    assert set(wb.sheetnames) == {"Alice Smith", "Bob Jones"}
+
+
 def test_generate_staff_export_no_signs_for_some_days(tmp_path):
     signs = [
         _staff_sign(1, "Alice", "Smith", "IN", "2026-06-08 08:00:00"),
@@ -450,6 +468,24 @@ def test_generate_staff_export_still_signed_in(tmp_path):
     assert any("Still signed in" in str(v) for v in values)
 
 
+def test_generate_staff_export_embeds_signature_image(tmp_path):
+    """A session with a captured signature gets an embedded PNG on the
+    extra signature row underneath its data row."""
+    import openpyxl
+
+    signs = [
+        _staff_sign(1, "Alice", "Smith", "IN",  "2026-06-09 08:00:00",
+                    role="Manager", signature=b"[(0, 0, 10, 10), (10, 10, 20, 0)]"),
+        _staff_sign(1, "Alice", "Smith", "OUT", "2026-06-09 16:00:00", role="Manager"),
+    ]
+    out = str(tmp_path / "staff_with_sig.xlsx")
+    export_util.generate_staff_export(signs, "2026-06-09", "2026-06-09", out)
+
+    wb = openpyxl.load_workbook(out)
+    ws = wb.active
+    assert len(ws._images) >= 1
+
+
 def test_generate_staff_export_totals_correct(tmp_path):
     """The per-person total at the bottom sums every session's duration."""
     import openpyxl
@@ -469,6 +505,26 @@ def test_generate_staff_export_totals_correct(tmp_path):
     ws = wb.active
     values = [c.value for row in ws.iter_rows() for c in row if c.value]
     assert any("Total time in the centre: 7h 30m" == v for v in values)
+
+
+def test_generate_staff_export_no_sessions_shows_placeholder(tmp_path, monkeypatch):
+    """Defensive branch: if a (member, sessions) pair with an empty sessions
+    list ever reaches the renderer, it shows a 'no records' row instead of
+    crashing. `_build_staff_sessions` always produces at least one session per
+    member for real input, so this is exercised via monkeypatch."""
+    import openpyxl
+
+    monkeypatch.setattr(
+        export_util, "_build_staff_sessions",
+        lambda signs: [((1, "Alice", "Smith", "Manager"), [])],
+    )
+    out = str(tmp_path / "staff_no_sessions.xlsx")
+    export_util.generate_staff_export([], "2026-06-09", "2026-06-09", out)
+
+    wb = openpyxl.load_workbook(out)
+    ws = wb.active
+    values = [c.value for row in ws.iter_rows() for c in row if c.value]
+    assert any("No sign-in records for this period." in str(v) for v in values)
 
 
 def test_generate_staff_export_year_header(tmp_path):
