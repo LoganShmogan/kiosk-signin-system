@@ -58,7 +58,7 @@ class SocialScreen(tk.Frame):
             cards_row,
             "Social Media",
             [
-                ("Facebook", "Parent / Caregiver Page", theme.LINK_TEXT),
+                ("Facebook", "Facebook Page", theme.LINK_TEXT),
                 ("Website", "www.example-kiosk.org", theme.LINK_TEXT),
             ],
         )
