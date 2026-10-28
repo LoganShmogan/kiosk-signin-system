@@ -28,7 +28,7 @@ The `app_password` is a Gmail App Password, not the account's main password. App
 
 #### Trigger Flow
 
-1. After a successful sign-in/out in `signature_screen.py`, `email_notifier.send_notification()` is called.
+1. After a successful sign-in/out, `email_notifier.send_notification()` is called. This happens both on the kiosk (`signature_screen.py`) and on the web dashboard's Sign In / Out page (`/signin` in `dashboard/app.py`), including bulk sign in/out, once per person signed.
 2. The function spawns a daemon thread to send the email asynchronously, so it does not block the UI.
 3. Inside the thread, it:
    - Loads the email config from the JSON file.
@@ -59,11 +59,11 @@ All exceptions during email sending are silently caught. This is intentional -- 
 The email is sent as a plain text MIME message:
 
 ```
-Subject: Kiosk Sign-In Notification -- Jessica Allen
+Subject: Kiosk Sign-In Notification -- Ava Thompson
 
 Hi,
 
-Jessica Allen has been signed IN at 03:15 PM on Monday 21 June 2026.
+Ava Thompson has been signed IN at 03:15 PM on Monday 21 June 2026.
 
 -- Kiosk Sign-In System
 ```

@@ -8,7 +8,7 @@ The system is made up of two main applications that run simultaneously:
 
 1. **Kiosk Application** -- A fullscreen Tkinter desktop GUI designed for a Windows touchscreen kiosk PC. This is the primary interface used by caregivers and staff on-site.
 
-2. **Web Dashboard** -- A Flask web application that runs on the local network, providing administrators with analytics, data management, and export functionality from any browser on the same network.
+2. **Web Dashboard** -- A Flask web application reachable on the local network and, optionally, over the internet at a URL like `https://kiosk-dashboard.example.com` (via a tunnel such as Cloudflare Tunnel -- see [14-dashboard-hosting.md](14-dashboard-hosting.md)), providing a mobile-friendly web Sign In/Out page for staff, plus analytics, data management, and export functionality for admins, from any browser.
 
 Both applications share the same SQLite database file (`signin_data.db`), located inside the `kiosk_signin/` directory during development.
 
@@ -18,10 +18,10 @@ The entry point is `kiosk_signin/app.py`. When launched, it starts the Flask das
 
 ```
 main thread:     Tkinter mainloop (kiosk GUI)
-daemon thread:   Flask dev server (web dashboard on port 5000)
+daemon thread:   Waitress WSGI server (web dashboard on port 5000)
 ```
 
-The Flask server runs with `debug=False` and `use_reloader=False` to avoid conflicts with Tkinter's main loop. Because the thread is a daemon, it terminates automatically when the kiosk window is closed.
+The dashboard is served by Waitress, a production WSGI server, rather than Flask's own development server — see [11-threading-and-concurrency.md](11-threading-and-concurrency.md) for why. Because the thread is a daemon, it terminates automatically when the kiosk window is closed.
 
 The dashboard can also be run independently with `python dashboard/app.py` for situations where the kiosk is not needed.
 
@@ -43,12 +43,12 @@ The dashboard can also be run independently with `python dashboard/app.py` for s
                    |
                    +-- dashboard/app.py      (routes + logic)
                    +-- dashboard/templates/  (Jinja2 HTML)
-                   +-- dashboard/static/     (CSS)
+                   +-- dashboard/static/     (CSS + JS)
       |
       +-------> Shared modules
                    |
                    +-- database.py       (SQLite data access)
-                   +-- export_util.py    (Excel generation)
+                   +-- export_util.py    (Excel/CSV/PDF exports)
                    +-- email_notifier.py (SMTP notifications)
 ```
 

@@ -42,6 +42,22 @@ def staff_member(**overrides):
     return base
 
 
+class FakeApp:
+    """Stand-in for the kiosk App passed to every screen's __init__. Screens
+    only ever call app.show_screen(name, **kwargs); this records each call
+    so tests can assert on kiosk navigation without a real screen stack."""
+
+    def __init__(self):
+        self.calls = []
+
+    def show_screen(self, name, **kwargs):
+        self.calls.append((name, kwargs))
+
+    @property
+    def last_call(self):
+        return self.calls[-1] if self.calls else None
+
+
 def caregiver(member_id, **overrides):
     base = {
         "member_id": member_id,

@@ -75,7 +75,7 @@ def test_pil_unavailable_falls_back_when_import_fails(monkeypatch):
 
 
 # ── generate_export ────────────────────────────────────────────────────────────
-# generate_export shares its layout with generate_staff_export (#78): one
+# generate_export shares its layout with generate_staff_export: one
 # worksheet per member, each holding that member's sign-in/out sessions as
 # Date | Sign In | Sign Out | Duration rows.
 
@@ -106,7 +106,7 @@ def test_generate_export_to_bytesio():
 
 
 def test_generate_export_one_sheet_per_member(tmp_path):
-    """Regression test for #78: member export uses the same one-sheet-per-
+    """Regression test: member export uses the same one-sheet-per-
     person layout as the staff export, instead of one sheet per calendar day."""
     import openpyxl
 
@@ -420,7 +420,7 @@ def test_generate_staff_export_multiple_staff(tmp_path):
 
 
 def test_generate_staff_export_one_sheet_per_staff_member(tmp_path):
-    """Regression test for #76: downloading all staff gives each staff member
+    """Regression test: downloading all staff gives each staff member
     their own worksheet, instead of one shared sheet with page breaks."""
     import openpyxl
 
@@ -541,3 +541,145 @@ def test_generate_staff_export_year_header(tmp_path):
     ws = wb.active
     values = [c.value for row in ws.iter_rows() for c in row if c.value]
     assert any("Alice Smith" in str(v) and "2026" in str(v) for v in values)
+
+
+# ── generate_export_csv / generate_staff_export_csv ─────────────────────────
+
+def test_generate_export_csv_writes_rows():
+    import io
+    signs = [
+        _sign(1, "Alice", "Brown", "IN",  "2026-01-01 08:30:00"),
+        _sign(1, "Alice", "Brown", "OUT", "2026-01-01 14:00:00"),
+    ]
+    buf = io.StringIO()
+    export_util.generate_export_csv(signs, "2026-01-01", "2026-01-01", buf)
+    text = buf.getvalue()
+    assert "Alice Brown" in text
+    assert "08:30" in text and "14:00" in text
+
+
+def test_generate_export_csv_empty_signs_list():
+    import io
+    buf = io.StringIO()
+    export_util.generate_export_csv([], "2026-01-01", "2026-01-01", buf)
+    assert "No sign-in records for this period." in buf.getvalue()
+
+
+def test_generate_export_csv_still_signed_in():
+    import io
+    signs = [_sign(1, "Alice", "Brown", "IN", "2026-01-01 08:30:00")]
+    buf = io.StringIO()
+    export_util.generate_export_csv(signs, "2026-01-01", "2026-01-01", buf)
+    assert "Still signed in" in buf.getvalue()
+
+
+def test_generate_export_csv_person_with_no_sessions(monkeypatch):
+    import io
+    monkeypatch.setattr(
+        export_util, "_build_staff_sessions",
+        lambda signs: [((1, "Alice", "Smith", ""), [])],
+    )
+    buf = io.StringIO()
+    export_util.generate_export_csv([], "2026-01-01", "2026-01-01", buf)
+    assert "No sign-in records for this period." in buf.getvalue()
+
+
+def test_generate_staff_export_csv_writes_rows():
+    import io
+    signs = [
+        _staff_sign(1, "Alice", "Smith", "IN",  "2026-06-09 08:00:00", role="Manager"),
+        _staff_sign(1, "Alice", "Smith", "OUT", "2026-06-09 17:00:00", role="Manager"),
+    ]
+    buf = io.StringIO()
+    export_util.generate_staff_export_csv(signs, "2026-06-09", "2026-06-09", buf)
+    text = buf.getvalue()
+    assert "Alice Smith" in text
+    assert "Manager" in text
+    assert "Total" in text
+
+
+# ── generate_export_pdf / generate_staff_export_pdf ─────────────────────────
+
+def test_generate_export_pdf_to_bytesio():
+    import io
+    signs = [
+        _sign(1, "Alice", "Brown", "IN",  "2026-01-01 08:30:00"),
+        _sign(1, "Alice", "Brown", "OUT", "2026-01-01 14:00:00"),
+    ]
+    buf = io.BytesIO()
+    export_util.generate_export_pdf(signs, "2026-01-01", "2026-01-01", buf)
+    buf.seek(0)
+    data = buf.read()
+    assert len(data) > 0
+    assert data[:4] == b"%PDF"
+
+
+def test_generate_export_pdf_empty_signs_list():
+    import io
+    buf = io.BytesIO()
+    export_util.generate_export_pdf([], "2026-01-01", "2026-01-01", buf)
+    buf.seek(0)
+    assert buf.read()[:4] == b"%PDF"
+
+
+def test_generate_export_pdf_multiple_people_paginates():
+    import io
+    signs = [
+        _sign(1, "Alice", "Brown", "IN",  "2026-01-01 08:30:00"),
+        _sign(1, "Alice", "Brown", "OUT", "2026-01-01 14:00:00"),
+        _sign(2, "Bob",   "Jones", "IN",  "2026-01-01 09:00:00"),
+        _sign(2, "Bob",   "Jones", "OUT", "2026-01-01 15:00:00"),
+    ]
+    buf = io.BytesIO()
+    export_util.generate_export_pdf(signs, "2026-01-01", "2026-01-01", buf)
+    buf.seek(0)
+    assert buf.read()[:4] == b"%PDF"
+
+
+def test_generate_export_pdf_still_signed_in():
+    import io
+    signs = [_sign(1, "Alice", "Brown", "IN", "2026-01-01 08:30:00")]
+    buf = io.BytesIO()
+    export_util.generate_export_pdf(signs, "2026-01-01", "2026-01-01", buf)
+    buf.seek(0)
+    assert buf.read()[:4] == b"%PDF"
+
+
+def test_generate_export_pdf_person_with_no_sessions(monkeypatch):
+    import io
+    monkeypatch.setattr(
+        export_util, "_build_staff_sessions",
+        lambda signs: [((1, "Alice", "Smith", ""), [])],
+    )
+    buf = io.BytesIO()
+    export_util.generate_export_pdf([], "2026-01-01", "2026-01-01", buf)
+    buf.seek(0)
+    assert buf.read()[:4] == b"%PDF"
+
+
+def test_generate_export_pdf_escapes_html_special_characters():
+    """Names containing HTML-significant characters must not break the
+    xhtml2pdf render -- they're escaped, not passed through raw."""
+    import io
+    signs = [
+        _sign(1, "A<b>lice", "Br&own", "IN",  "2026-01-01 08:30:00"),
+        _sign(1, "A<b>lice", "Br&own", "OUT", "2026-01-01 14:00:00"),
+    ]
+    buf = io.BytesIO()
+    export_util.generate_export_pdf(signs, "2026-01-01", "2026-01-01", buf)
+    buf.seek(0)
+    assert buf.read()[:4] == b"%PDF"
+
+
+def test_generate_staff_export_pdf_to_bytesio():
+    import io
+    signs = [
+        _staff_sign(1, "Alice", "Smith", "IN",  "2026-06-09 08:00:00", role="Manager"),
+        _staff_sign(1, "Alice", "Smith", "OUT", "2026-06-09 17:00:00", role="Manager"),
+    ]
+    buf = io.BytesIO()
+    export_util.generate_staff_export_pdf(signs, "2026-06-09", "2026-06-09", buf)
+    buf.seek(0)
+    data = buf.read()
+    assert len(data) > 0
+    assert data[:4] == b"%PDF"

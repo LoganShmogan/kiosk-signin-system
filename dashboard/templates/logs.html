@@ -35,32 +35,40 @@
     <table>
         <thead>
             <tr>
-                <th>Child</th>
+                <th>Name</th>
                 <th>In</th>
                 <th>Out</th>
                 <th>Status</th>
                 <th>Notes</th>
+                <th></th>
             </tr>
         </thead>
         <tbody>
         {% for row in rows %}
         <tr>
-            <td>{{ row.first_name }} {{ row.last_name }}</td>
+            <td class="cell-title">
+                {{ row.first_name }} {{ row.last_name }}
+                {% if row.person_type == 'staff' %}<span class="badge badge-staff">STAFF</span>{% endif %}
+            </td>
             <td>
+                <span class="cell-inline">
                 {{ row.in_time or '—' }}
                 {% if row.in_id %}
                 <a href="{{ url_for('sign_edit', sign_id=row.in_id) }}" class="btn btn-small">Edit</a>
                 {% else %}
-                <a href="{{ url_for('sign_add', member_id=row.member_id, direction='IN', date=(row.out_time[:10] if row.out_time else '')) }}" class="btn btn-small">Add</a>
+                <a href="{{ url_for('sign_add', member_id=row.member_id, direction='IN', pair_id=row.out_id) }}" class="btn btn-small">Add</a>
                 {% endif %}
+                </span>
             </td>
             <td>
+                <span class="cell-inline">
                 {{ row.out_time or '—' }}
                 {% if row.out_id %}
                 <a href="{{ url_for('sign_edit', sign_id=row.out_id) }}" class="btn btn-small">Edit</a>
                 {% else %}
-                <a href="{{ url_for('sign_add', member_id=row.member_id, direction='OUT', date=(row.in_time[:10] if row.in_time else '')) }}" class="btn btn-small">Add</a>
+                <a href="{{ url_for('sign_add', member_id=row.member_id, direction='OUT', pair_id=row.in_id) }}" class="btn btn-small">Add</a>
                 {% endif %}
+                </span>
             </td>
             <td>
                 {% if row.out_time %}
@@ -70,9 +78,18 @@
                 {% endif %}
             </td>
             <td>{{ [row.in_notes, row.out_notes] | select | join(' / ') or '—' }}</td>
+            <td class="cell-actions">
+                <form method="POST" action="{{ url_for('sign_delete') }}"
+                      onsubmit="return confirm('Delete this visit? This removes both the sign-in and sign-out and cannot be undone.')">
+                    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                    {% if row.in_id %}<input type="hidden" name="sign_id" value="{{ row.in_id }}">{% endif %}
+                    {% if row.out_id %}<input type="hidden" name="sign_id" value="{{ row.out_id }}">{% endif %}
+                    <button type="submit" class="btn btn-small btn-danger">Delete</button>
+                </form>
+            </td>
         </tr>
         {% else %}
-        <tr><td colspan="5" style="color:#999;text-align:center;padding:20px">No records found.</td></tr>
+        <tr class="empty-row"><td colspan="6">No records found.</td></tr>
         {% endfor %}
         </tbody>
     </table>

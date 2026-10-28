@@ -1,4 +1,6 @@
 import ast
+import csv
+import html
 import io
 from datetime import datetime
 
@@ -361,3 +363,123 @@ def generate_staff_export(signs: list, date_from: str, date_to: str, output_path
     """
     return _generate_person_sessions_export(signs, date_from, date_to, output_path,
                                             title_prefix="Kiosk Staff Sign-In Export")
+
+
+def _generate_person_sessions_csv(signs: list, date_from: str, date_to: str,
+                                  output, title_prefix: str) -> str:
+    """CSV version of _generate_person_sessions_export: one row per session,
+    with a per-person total row. CSV has no concept of worksheets, so every
+    person's sessions share one flat sheet, grouped and separated by their
+    name/role/total rows."""
+    sessions_by_person = _build_staff_sessions(signs)
+    writer = csv.writer(output)
+    writer.writerow([f"{title_prefix} | {date_from} to {date_to}"])
+    writer.writerow(["Name", "Role", "Date", "Sign In", "Sign Out", "Duration"])
+
+    if not sessions_by_person:
+        writer.writerow(["No sign-in records for this period."])
+        return output
+
+    for key, sessions in sessions_by_person:
+        _, fname, lname, role = key
+        name = f"{fname} {lname}".strip() or "Unknown"
+        total_mins = 0
+        if not sessions:
+            writer.writerow([name, role, "No sign-in records for this period.", "", "", ""])
+            continue
+        for sess in sessions:
+            in_evt, out_evt = sess["in"], sess["out"]
+            mins = _duration_mins(in_evt, out_evt)
+            if mins is not None:
+                total_mins += mins
+            in_text = in_evt["timestamp"][11:16] if in_evt else ""
+            out_text = out_evt["timestamp"][11:16] if out_evt else "Still signed in"
+            writer.writerow([name, role, _day_month(sess["date"]), in_text, out_text, _fmt_duration(mins)])
+        writer.writerow([name, role, "", "", "Total", _fmt_duration(total_mins)])
+    return output
+
+
+def generate_export_csv(signs: list, date_from: str, date_to: str, output) -> str:
+    """CSV equivalent of generate_export. output is a text-mode file-like object."""
+    return _generate_person_sessions_csv(signs, date_from, date_to, output,
+                                         title_prefix="Kiosk Sign-In Export")
+
+
+def generate_staff_export_csv(signs: list, date_from: str, date_to: str, output) -> str:
+    """CSV equivalent of generate_staff_export. output is a text-mode file-like object."""
+    return _generate_person_sessions_csv(signs, date_from, date_to, output,
+                                         title_prefix="Kiosk Staff Sign-In Export")
+
+
+def _generate_person_sessions_pdf(signs: list, date_from: str, date_to: str,
+                                  output, title_prefix: str) -> str:
+    """PDF version of _generate_person_sessions_export: one page per person
+    (via a CSS page-break), same Date/Sign In/Sign Out/Duration layout as
+    the .xlsx, rendered as HTML and converted with xhtml2pdf -- already a
+    project dependency, used by Docs/generate_printable_docs.py."""
+    from xhtml2pdf import pisa
+
+    sessions_by_person = _build_staff_sessions(signs)
+    period_label = html.escape(f"{title_prefix} | {date_from} to {date_to}")
+    pages = []
+
+    if not sessions_by_person:
+        pages.append(f"<h1>{period_label}</h1><p><i>No sign-in records for this period.</i></p>")
+    else:
+        for i, (key, sessions) in enumerate(sessions_by_person):
+            _, fname, lname, role = key
+            name = html.escape(f"{fname} {lname}".strip() or "Unknown")
+            banner = "  --  ".join(html.escape(p) for p in [name, role, _year_label(sessions)] if p)
+
+            rows = []
+            total_mins = 0
+            for sess in sessions:
+                in_evt, out_evt = sess["in"], sess["out"]
+                mins = _duration_mins(in_evt, out_evt)
+                if mins is not None:
+                    total_mins += mins
+                in_text = in_evt["timestamp"][11:16] if in_evt else ""
+                out_text = out_evt["timestamp"][11:16] if out_evt else "Still signed in"
+                rows.append(
+                    f"<tr><td>{_day_month(sess['date'])}</td><td>{in_text}</td>"
+                    f"<td>{html.escape(out_text)}</td><td>{_fmt_duration(mins)}</td></tr>"
+                )
+            if not rows:
+                rows.append('<tr><td colspan="4"><i>No sign-in records for this period.</i></td></tr>')
+
+            style = ' style="page-break-before: always;"' if i > 0 else ""
+            pages.append(f"""
+                <div{style}>
+                  <h1>{period_label}</h1>
+                  <h2>{banner}</h2>
+                  <table>
+                    <tr><th>Date</th><th>Sign In</th><th>Sign Out</th><th>Duration</th></tr>
+                    {''.join(rows)}
+                  </table>
+                  <p><b>Total time in the centre: {_fmt_duration(total_mins)}</b></p>
+                </div>
+            """)
+
+    full_html = f"""
+        <html><head><style>
+          body {{ font-family: Helvetica, sans-serif; font-size: 10pt; }}
+          h1 {{ font-size: 13pt; color: #372976; }}
+          h2 {{ font-size: 11pt; }}
+          table {{ width: 100%; border-collapse: collapse; margin-top: 8px; }}
+          th, td {{ border: 1px solid #ccc; padding: 4px 8px; text-align: center; }}
+        </style></head><body>{''.join(pages)}</body></html>
+    """
+    pisa.CreatePDF(full_html, dest=output)
+    return output
+
+
+def generate_export_pdf(signs: list, date_from: str, date_to: str, output) -> str:
+    """PDF equivalent of generate_export."""
+    return _generate_person_sessions_pdf(signs, date_from, date_to, output,
+                                         title_prefix="Kiosk Sign-In Export")
+
+
+def generate_staff_export_pdf(signs: list, date_from: str, date_to: str, output) -> str:
+    """PDF equivalent of generate_staff_export."""
+    return _generate_person_sessions_pdf(signs, date_from, date_to, output,
+                                         title_prefix="Kiosk Staff Sign-In Export")

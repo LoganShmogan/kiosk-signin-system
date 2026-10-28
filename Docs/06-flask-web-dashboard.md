@@ -9,7 +9,8 @@ The web dashboard is a server-side rendered Flask application. It provides admin
 The dashboard code lives in the `dashboard/` directory:
 - `app.py` -- All routes, logic, and database queries.
 - `templates/` -- Jinja2 HTML templates.
-- `static/style.css` -- Stylesheet.
+- `static/style.css` -- Stylesheet (mobile first; see [Responsive Layout](#responsive-layout)).
+- `static/layout.js` -- Shared page behaviour loaded by `base.html`: the burger menu and stacked-table labels.
 
 ## Flask Application Setup
 
@@ -36,11 +37,21 @@ Flask uses decorators to map URL paths to Python functions. The dashboard define
 | `/signin`                      | GET, POST  | any logged in | Web Sign In / Out page and submission |
 | `/signin/search`               | GET        | any logged in | JSON: search members/staff by name for the sign-in page |
 | `/signin/alerts`               | GET        | any logged in | JSON: active alerts for a set of member ids |
+| `/signin/currently-in`         | GET        | any logged in | JSON: everyone currently signed in, for the sign-in page's bulk-select action |
 | `/status`                      | GET        | any logged in | Read-only "who's here" view (staff's home page; admins can also reach it) |
+| `/my-timesheet`                | GET        | any logged in | Self-service view of the logged-in staff member's own sign-in history |
+| `/my-timesheet/download`       | GET        | any logged in | Download the logged-in staff member's own timesheet (`fmt=xlsx\|pdf\|csv`, `date_from`/`date_to` optional) |
+| `/run-sheets`                  | GET        | any logged in | List/search run sheets, with each one's member count |
+| `/run-sheets/new`              | GET, POST  | any logged in | Create a new run sheet (name + member picker) |
+| `/run-sheets/<int:run_id>/edit`| GET, POST  | any logged in | Rename a run sheet and edit its membership |
+| `/run-sheets/<int:run_id>/delete` | POST    | any logged in | Delete a run sheet |
+| `/run-sheets/search`           | GET        | any logged in | JSON: search run sheets by name (used by the sign-in page's "Load a Run Sheet") |
+| `/run-sheets/<int:run_id>/members` | GET    | any logged in | JSON: a run sheet's members, as `{id, name}` pairs |
 | `/dashboard`                   | GET        | admin         | Analytics overview               |
 | `/logs`                        | GET        | admin         | Paginated sign-in log, with status/search/date filters |
 | `/logs/sign/<int:sign_id>/edit`| GET, POST  | admin         | Edit an existing sign-in/out time |
-| `/logs/sign/add`               | GET, POST  | admin         | Add a missing sign-in/out time (`member_id`, `direction` query params) |
+| `/logs/sign/add`               | GET, POST  | admin         | Add a missing sign-in/out time (`member_id`, `direction`, `pair_id` = the existing other half of the visit) |
+| `/logs/sign/delete`            | POST       | admin         | Delete one or more sign-in/out records (`sign_id`, repeatable): a whole visit from the logs table, or one record from the edit page |
 | `/audit`                       | GET        | admin         | Paginated audit log              |
 | `/people`                      | GET        | admin         | Member or staff listing          |
 | `/people/new`                  | GET, POST  | admin         | Create a new person              |
@@ -49,20 +60,21 @@ Flask uses decorators to map URL paths to Python functions. The dashboard define
 | `/alerts`                      | GET, POST  | admin         | View/create sign-in alerts       |
 | `/alerts/<int:alert_id>/delete`| POST       | admin         | Delete an alert                  |
 | `/exports`                     | GET        | admin         | Export page                      |
-| `/export/staff`                | GET        | admin         | Download staff Excel file -- all staff (`date_from`/`date_to` required) or one staff member (`person_id`, dates optional) |
-| `/export/person`               | GET        | admin         | Download one person's Excel file (`person_id` required; `date_from`/`date_to` optional query params) |
+| `/export/staff`                | GET        | admin         | Download staff file -- all staff (`date_from`/`date_to` required) or one staff member (`person_id`, dates optional); `fmt=xlsx\|pdf\|csv`, defaults to xlsx |
+| `/export/person`               | GET        | admin         | Download one person's file (`person_id` required; `date_from`/`date_to` optional; `fmt=xlsx\|pdf\|csv`, defaults to xlsx) |
 | `/people/<int:person_id>/signature.png` | GET | admin  | Stream that person's most recently used signature as a PNG (404 if none on file) |
 | `/dashboard-users`             | GET        | admin         | List dashboard login accounts    |
-| `/dashboard-users/new`         | POST       | admin         | Create a dashboard login (name + PIN + role) |
+| `/dashboard-users/new`         | POST       | admin         | Create a dashboard login (name + password + role + optional linked staff member) |
+| `/dashboard-users/<int:user_id>/edit` | GET, POST | admin | Rename, re-role, re-link, or change the password of a dashboard login |
 | `/dashboard-users/<int:user_id>/delete` | POST | admin    | Delete a dashboard login (blocked for the last remaining admin) |
 
 ## Authentication
 
-The dashboard authenticates against the `dashboard_users` table (name + hashed PIN), not a hardcoded credential -- see [09-authentication-and-security.md](09-authentication-and-security.md) for the full design (hashing, roles, CSRF, rate limiting, secure cookies). In short:
+The dashboard authenticates against the `dashboard_users` table (name + hashed password), not a hardcoded credential -- see [09-authentication-and-security.md](09-authentication-and-security.md) for the full design (hashing, password rules, roles, account lockout, CSRF, rate limiting, security headers, secure cookies). In short:
 
-1. User submits name and PIN via the login form (rate-limited to 5 attempts/minute).
-2. The server looks up `database.check_dashboard_login(name, pin)`.
-3. On success, the session stores `user_id`, `name`, and `role` (not just a boolean).
+1. User submits name and password via the login form (rate-limited to 5 attempts/minute per IP, plus a per-account lockout after 5 consecutive failures).
+2. The server checks `database.is_dashboard_user_locked(name)` first, then looks up `database.check_dashboard_login(name, pin)`.
+3. On success, the session stores `user_id`, `name`, `role`, and `member_id` (not just a boolean) -- `member_id` is `None` unless an admin has linked this login to a staff record.
 4. Two decorators guard routes: `login_required` (any authenticated user) and `admin_required` (must additionally have `role == "admin"`).
 
 ```python
@@ -147,22 +159,22 @@ The dashboard route performs several aggregate queries to compute statistics:
 
 ### Currently Signed In
 
-Uses a correlated subquery to find members whose most recent sign event today has direction "IN":
+This is computed by `database.get_currently_signed_in()` (in `kiosk_signin/database.py`, not `app.py`), a single shared function rather than dashboard-only SQL, since both the dashboard and the sign-in page's "Select all currently signed in" bulk action need the same "who's here right now" answer. It uses a correlated subquery to find people whose most recent sign event today has direction "IN":
 
 ```sql
-SELECT COUNT(*) FROM (
-    SELECT s.member_id FROM sign_ins s
-    WHERE DATE(s.timestamp) = ?
-    AND s.direction = 'IN'
-    AND s.id = (
-        SELECT MAX(id) FROM sign_ins s2
-        WHERE s2.member_id = s.member_id
-        AND DATE(s2.timestamp) = ?
-    )
+SELECT m.id, m.first_name, m.last_name, s.timestamp
+FROM members m
+JOIN sign_ins s ON s.member_id = m.id
+WHERE s.timestamp LIKE ?
+AND s.direction = 'IN'
+AND s.id = (
+    SELECT s2.id FROM sign_ins s2
+    WHERE s2.member_id = m.id AND s2.timestamp LIKE ?
+    ORDER BY s2.timestamp DESC, s2.id DESC LIMIT 1
 )
 ```
 
-This finds each member's latest sign event today (by maximum ID) and counts only those where the direction is IN.
+This finds each person's latest sign event today (by timestamp, not insertion order, so a back-dated record added from the logs page doesn't count as their newest) and returns only those where the direction is IN, including the `id` needed to pre-select them on the sign-in page. `dashboard/app.py`'s `_today_snapshot()` helper calls this function and derives its "currently in" count from `len(...)`, rather than running a second, separate COUNT query.
 
 ### Daily Totals
 
@@ -198,38 +210,70 @@ The total count is queried first, then the page's rows are fetched with `LIMIT ?
 
 ## Filtering
 
-The logs page supports filtering by name search and date range using query parameters, applied at the SQL level; the status filter (still signed in / signed out) is applied afterwards in Python by `_pair_sign_in_visits`, since "signed in" vs. "signed out" is a property of a paired *visit*, not a single `sign_ins` row. The SQL-level conditions are dynamically built:
+The logs page supports filtering by name search, date range and status using query parameters. Only the name search is applied at the SQL level; the date range and status filters are applied afterwards in Python to the visits built by `_pair_sign_in_visits`, since both are properties of a paired *visit*, not a single `sign_ins` row (filtering rows by date first would orphan the OUT of a visit whose IN falls outside the range). A visit is dated by its IN time, or its OUT time if it has no IN. The SQL-level condition is dynamically built:
 
 ```python
 where_parts = []
 params = []
-if date_from:
-    where_parts.append("DATE(s.timestamp) >= ?")
-    params.append(date_from)
-if date_to:
-    where_parts.append("DATE(s.timestamp) <= ?")
-    params.append(date_to)
 if search:
     where_parts.append("(m.first_name || ' ' || m.last_name) LIKE ?")
     params.append(f"%{search}%")
 where_clause = ("WHERE " + " AND ".join(where_parts)) if where_parts else ""
 ```
 
-This approach safely constructs SQL WHERE clauses while still using parameterised queries to prevent injection. After the matching rows are paired into visits, `status=OPEN`/`status=CLOSED` filters the resulting list down to open (no sign-out yet) or closed visits.
+This approach safely constructs SQL WHERE clauses while still using parameterised queries to prevent injection. After the matching rows are paired into visits, `date_from`/`date_to` and then `status=OPEN`/`status=CLOSED` filter the resulting list.
+
+### Editing, Adding and Deleting Records
+
+Visits aren't stored — `_pair_sign_in_visits` rebuilds them on every page load by walking each person's records in time order and pairing each IN with the OUT that follows it. That means a record's *time* decides which visit it belongs to, so the edit and add pages only accept a time that sits strictly between the neighbouring records (`database.get_sign_neighbours()`):
+
+- **Edit** — the new time must be after the person's previous record and before their next one.
+- **Add** — the link from the logs table passes `pair_id`, the existing half of the visit. A missing OUT must fall after its IN and before the person's next record; a missing IN must fall before its OUT and after the previous record.
+
+Without this, moving or adding an OUT earlier than its IN reorders the records and the logs page shows one visit as two separate rows. The allowed range is shown under the time field (and set as the input's `min`/`max`); anything outside it is rejected with a flash message.
+
+`/logs/sign/delete` removes records via `database.delete_signs()` and writes a `SIGN_DELETED` audit entry per record. The logs table has a **Delete** button per visit (both halves), and the edit page has one for just that record. Works the same for members and staff.
 
 ## File Downloads
 
-The export routes generate Excel files in memory using `io.BytesIO()` and send them to the browser with `send_file()`:
+The export routes generate files in memory and send them to the browser with `send_file()`. `_export_person_response(person, date_from, date_to, fmt="xlsx")` is the shared helper behind `/export/person`, `/export/staff`'s single-person branch, and `/my-timesheet/download` -- it dispatches on `fmt` to pick the right generator and MIME type from `export_util.py`:
 
 ```python
-buf = io.BytesIO()
-generate_staff_export(signs, date_from, date_to, buf)
+_EXPORT_FORMATS = {
+    "xlsx": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    "pdf": "application/pdf",
+    "csv": "text/csv",
+}
+
+if fmt == "pdf":
+    buf = io.BytesIO()
+    (generate_staff_export_pdf if person_type == "staff" else generate_export_pdf)(
+        signs, export_from, export_to, buf)
+elif fmt == "csv":
+    text_buf = io.StringIO()
+    (generate_staff_export_csv if person_type == "staff" else generate_export_csv)(
+        signs, export_from, export_to, text_buf)
+    buf = io.BytesIO(text_buf.getvalue().encode("utf-8"))
+else:
+    buf = io.BytesIO()
+    (generate_staff_export if person_type == "staff" else generate_export)(
+        signs, export_from, export_to, buf)
 buf.seek(0)
-return send_file(buf, as_attachment=True, download_name=filename,
-                 mimetype="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+return send_file(buf, as_attachment=True, download_name=filename, mimetype=_EXPORT_FORMATS[fmt])
 ```
 
-The `as_attachment=True` flag tells the browser to download the file rather than displaying it. The MIME type specifies the `.xlsx` format.
+An unrecognised `fmt` value falls back to `xlsx` rather than erroring. CSV is generated with the stdlib `csv` module into a text buffer, then encoded to bytes for `send_file` (which expects a binary stream). PDF is generated with `xhtml2pdf` (already a project dependency, previously only used by `Docs/generate_printable_docs.py` -- see [Run Sheets (Web)](#run-sheets-web) for another example of reusing an existing tool rather than adding a new one), rendering a small HTML table per person and writing straight to a `BytesIO`. The `as_attachment=True` flag tells the browser to download the file rather than displaying it, and the filename's extension is derived from `fmt` (`KioskSignIn_{name}_Export_{from}_{to}.{fmt}`).
+
+`/export/staff`'s bulk (no `person_id`) branch isn't routed through `_export_person_response` -- it queries `get_staff_signs_for_export()` directly for every staff member at once -- so it repeats the same three-way `fmt` dispatch inline rather than through the shared helper.
+
+## Responsive Layout
+
+The stylesheet is mobile first: the base rules target phones and `min-width` media queries add to them at 600px, 720px and 900px.
+
+- **Navigation** — collapsed behind a burger button by default. `static/layout.js` measures whether every tab fits on one line and, only if it does, adds `.nav-wide` to the header to show the inline tab bar. Admins (who have the most tabs) get the burger on small laptops; staff, with only a few tabs, get the inline bar sooner. Esc closes the menu. Logout sits at the end of the menu.
+- **Tables** — any `<table>` inside `.table-wrap` renders as a stack of cards below 720px, one card per row with each cell labelled. `layout.js` copies each column's `<th>` text into its cells' `data-label` attribute, so new tables get this for free; cells under a blank header (action buttons) are right-aligned without a label, and a `cell-title` class on a cell shows it as the card heading with no label.
+- **Inputs** use a 16px font so iOS doesn't zoom the page on focus.
+- **Charts** sit in fixed-height `.chart-box` containers with `maintainAspectRatio: false`, so they keep a readable height on narrow screens.
 
 ## Charts (Client-Side)
 
@@ -283,6 +327,13 @@ On the **edit** path (`/people/<id>`), `person_type` is *not* read from the form
 2. Selecting a result adds them to an in-page "selected" list (chips), and triggers `GET /signin/alerts?member_ids=1,2,3` -- if any alerts come back, a modal shows them before the direction/notes/signature section is revealed, mirroring the kiosk's pre-submit alert popup.
 3. On submit, the browser POSTs to `/signin` with repeated `member_ids` fields, `direction`, `notes`, and `signature_data`.
 
+The search-and-select behaviour (steps 1-2's chip list) is factored out into `dashboard/static/person-picker.js`, a small shared widget instantiated with `window.PersonPicker.init({...})`. `signin.js` and `run_sheet_form.js` (see [Run Sheets (Web)](#run-sheets-web) below) each create their own picker instance pointed at their own DOM elements, so the same search/select/chip code isn't duplicated between the two pages.
+
+Two bulk-select shortcuts sit above the search box on the sign-in page, both of which add people to the same picker instance rather than replacing the selection, so ad hoc individuals can still be added on top of either one:
+
+- **Load a Run Sheet** -- a second, smaller search box that queries `GET /run-sheets/search?q=...` (run sheet names, not people). Clicking a result fetches `GET /run-sheets/<id>/members` and adds every member of that run sheet as a chip.
+- **Select all currently signed in** -- a button that fetches `GET /signin/currently-in` (backed by `get_currently_signed_in()`, see [Currently Signed In](#currently-signed-in) above), adds everyone returned as a chip, and then programmatically clicks the existing "OUT" direction button, since signing someone out is the only valid next action for a person who is already signed in. Staff can still switch back to IN by hand if that was a mistake.
+
 ### Signature Format Bridging
 
 The kiosk's `SignatureCanvas` stores a signature as a Python list of `(x1, y1, x2, y2)` line-segment tuples, serialised with `str(strokes).encode()` -- and `export_util.render_signature()` decodes it back with `ast.literal_eval()`. For the web signature pad to produce signatures that exports and the `/people/<id>/signature.png` route can read without any changes, `/signin`'s POST handler converts the browser's stroke data into that exact byte format server-side:
@@ -299,3 +350,59 @@ The browser never builds the Python-literal string itself -- it only ever sends 
 ### Direction Validation and Partial Success
 
 Just like the kiosk, submitting a batch of people can partially succeed: each selected person is checked individually against `get_allowed_direction()`, so if one person in a group is already signed in and the rest aren't, only the eligible ones are recorded and the flash message reports how many were skipped -- nobody's submission is rejected outright just because one person in the group wasn't eligible.
+
+## Run Sheets (Web)
+
+The kiosk has managed run sheets (named, reusable groups of people, e.g. a school bus run) since before the web dashboard existed, using `search_runs()`, `get_run_members()`, and `upsert_run()` in `kiosk_signin/database.py`. Those functions are name-keyed: `upsert_run(name, member_ids)` looks up a run by its `name`, so it can create or replace membership but cannot safely rename an existing run without either colliding with the row it meant to update or leaving a duplicate `run_groups` row behind.
+
+Full run sheet management on the dashboard (`/run-sheets` and friends) needed proper rename support, so it uses a separate, id-keyed pair of functions instead:
+
+```python
+def create_run(name: str, member_ids: list):
+    """Insert-only. Returns None instead of raising if the name is
+    already taken (run_groups.name is UNIQUE)."""
+    try:
+        with get_conn() as conn:
+            cur = conn.execute("INSERT INTO run_groups (name) VALUES (?)", (name,))
+            run_id = cur.lastrowid
+            ...
+        return run_id
+    except sqlite3.IntegrityError:
+        return None
+
+
+def update_run(run_id: int, name: str, member_ids: list) -> bool:
+    """Renames by id. Returns False instead of raising on a name
+    collision with a *different* run, or if run_id doesn't exist."""
+    try:
+        with get_conn() as conn:
+            cur = conn.execute("UPDATE run_groups SET name=? WHERE id=?", (name, run_id))
+            if cur.rowcount == 0:
+                return False
+            ...
+        return True
+    except sqlite3.IntegrityError:
+        return False
+```
+
+The `/run-sheets/new` and `/run-sheets/<id>/edit` routes check for `None`/`False` and flash `A run sheet named "..." already exists.` instead of letting the `sqlite3.IntegrityError` reach the user as a 500 error. The kiosk's own `upsert_run()`/`delete_run()` are untouched behaviourally, aside from gaining `log_event()` calls (`RUN_CREATED`/`RUN_UPDATED`/`RUN_DELETED`) so run sheet changes made from either the kiosk or the dashboard show up in the audit log, matching the pattern already used by `upsert_member()`/`delete_member()`.
+
+`run_sheets.html` (the list page) and `run_sheet_form.html` (create/edit) follow the same templates used for people management -- `run_sheets.html` mirrors `people.html`'s search-plus-table layout, and `run_sheet_form.html` embeds a `person-picker.js` instance (see [Web Sign In / Out Page](#web-sign-in--out-page) above) pre-populated with the run's current members on the edit page via a small inline `<script type="application/json">` block, so `run_sheet_form.js` can read the initial selection without an extra round trip.
+
+## My Timesheet (Self-Service)
+
+`/my-timesheet` and `/my-timesheet/download` let a staff member view and download their own sign-in history without needing admin access. Both routes resolve the person strictly from the session, never from a request parameter:
+
+```python
+user = get_dashboard_user(session["user_id"])
+if not user or not user.get("member_id"):
+    flash("Your account isn't linked to a staff record yet. Ask an admin to link it "
+          "from the Manage Dashboard Users page.", "error")
+    return redirect(url_for("signin"))
+```
+
+This is deliberate: `person_id`/`member_id` are never read from `request.args` on these two routes, unlike the admin export routes where an admin legitimately chooses whose records to export. A staff account tampering the URL to add `?person_id=...` has no effect -- there's no code path in `my_timesheet()`/`my_timesheet_download()` that would ever read it.
+
+`my_timesheet()` reuses `get_signs_for_member()` and `_pair_sign_in_visits()` (the same pairing function the admin Logs page uses -- see [Filtering](#filtering) above) to render an on-page table of the member's sessions, with an optional `date_from`/`date_to` query string filter matching the exact same optional-range UX as the admin "Export a Person's Sign-ins" page. `my_timesheet_download()` calls `_export_person_response()` (see [File Downloads](#file-downloads) above) with the same date range and a `fmt` choice, so a staff member gets the identical xlsx/pdf/csv output an admin would get exporting them.
+
+`get_signs_for_member()`'s SELECT was widened to include `sign_ins.id` and `sign_ins.notes` (previously omitted) specifically so its output could feed `_pair_sign_in_visits()` -- both are backward-compatible additions to the returned dict, not a breaking change for its other two callers (the kiosk's own export screen, and `_export_person_response`).

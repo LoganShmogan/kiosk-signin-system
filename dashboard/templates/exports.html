@@ -27,6 +27,14 @@
                 <label>To date (required for "All Staff")</label>
                 <input type="date" name="date_to" value="{{ today }}">
             </div>
+            <div class="form-group">
+                <label>Format</label>
+                <select name="fmt">
+                    <option value="xlsx">Excel (.xlsx)</option>
+                    <option value="pdf">PDF</option>
+                    <option value="csv">CSV</option>
+                </select>
+            </div>
             <button type="submit" class="btn">Download Staff Export</button>
         </form>
     </div>
@@ -62,6 +70,14 @@
             <div class="form-group">
                 <label>To date (optional)</label>
                 <input type="date" name="date_to">
+            </div>
+            <div class="form-group">
+                <label>Format</label>
+                <select name="fmt">
+                    <option value="xlsx">Excel (.xlsx)</option>
+                    <option value="pdf">PDF</option>
+                    <option value="csv">CSV</option>
+                </select>
             </div>
             <button type="submit" class="btn">Download Person Export</button>
         </form>

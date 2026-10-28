@@ -1,6 +1,6 @@
 # Export System
 
-This document describes how the Excel export system works, the algorithms used to transform sign-in data into spreadsheet reports, and the libraries involved.
+This document describes how the export system works, the algorithms used to transform sign-in data into reports, and the libraries involved. The dashboard offers three output formats -- Excel (.xlsx), PDF, and CSV -- all built from the exact same session data, described below in [PDF and CSV Formats](#pdf-and-csv-formats); everything up to that section describes the original Excel pipeline that the other two formats are built on top of.
 
 ## Overview
 
@@ -101,18 +101,56 @@ Both the web dashboard and the kiosk admin panel can export just one person's si
 
 ### Data Flow
 
-1. `database.get_signs_for_member(member_id, date_from=None, date_to=None)` retrieves every sign event for one person. With no dates it returns their full history; with `date_from`/`date_to` it restricts to that range using the same `DATE(s.timestamp) >= ?` / `<= ?` filtering as the bulk export queries.
-2. The caller checks the person's `person_type` and picks the matching wrapper function -- `person_type == "staff"` → `generate_staff_export()`, otherwise → `generate_export()`. Since both now delegate to the same shared renderer, this only changes the title text on the sheet, not the layout.
+1. `database.get_signs_for_member(member_id, date_from=None, date_to=None)` retrieves every sign event for one person. With no dates it returns their full history; with `date_from`/`date_to` it restricts to that range using the same `DATE(s.timestamp) >= ?` / `<= ?` filtering as the bulk export queries. Its SELECT includes `sign_ins.id` and `sign_ins.notes` alongside the fields the export functions need, so the same query can also feed `dashboard/app.py`'s `_pair_sign_in_visits()` for the "My Timesheet" self-service page (see [06-flask-web-dashboard.md](06-flask-web-dashboard.md#my-timesheet-self-service)) without a second query.
+2. The caller checks the person's `person_type` and picks the matching wrapper function -- `person_type == "staff"` → `generate_staff_export()`, otherwise → `generate_export()`. Since both now delegate to the same shared renderer, this only changes the title text on the sheet, not the layout. The same `person_type` check picks between the PDF and CSV variants of these wrappers (see [PDF and CSV Formats](#pdf-and-csv-formats)).
 
 ### Entry Points
 
-- **Dashboard:** `GET /export/person?person_id=<id>&date_from=<optional>&date_to=<optional>` (see `dashboard/app.py:export_person`). Date params are optional -- omitting them exports the person's entire history. Reachable from the "Export Sign-in History" button on a person's edit page, and the "Export a Person's Sign-ins" card on the Exports page (which lets an admin pick any member or staff person and a date range from a form).
-- **Dashboard, staff only:** `GET /export/staff?person_id=<id>&date_from=<optional>&date_to=<optional>` (see `dashboard/app.py:export_staff`) does the same single-person export as above, restricted to staff, from the "Staff Signing Sheets" card's own person dropdown -- so staff exports don't require going to the generic person picker. Both routes share the single-person logic via a `_export_person_response()` helper in `app.py`, which builds the file and flashes a "no records" error if the range is empty.
-- **Kiosk admin panel:** the "Export" button next to "Edit" in the Member Management and Staff Management search results opens a small date-range dialog (`_ExportRangeDialog` in `kiosk_signin/screens/admin_screen.py`) with optional From/To fields, Today/7-day/30-day quick-select buttons, and an "All history" button that clears the range. Confirming calls `AdminPanelScreen._export_single_person()`, which now accepts optional `date_from`/`date_to` and passes them straight through to `database.get_signs_for_member()`. Leaving both fields blank preserves the original full-history behaviour; the saved filename gains a `_<date_from>_to_<date_to>` suffix whenever a range is given. The file still saves to the user's home directory, same as the bulk kiosk exports.
+- **Dashboard:** `GET /export/person?person_id=<id>&date_from=<optional>&date_to=<optional>&fmt=<optional>` (see `dashboard/app.py:export_person`). Date params are optional -- omitting them exports the person's entire history. `fmt` is `xlsx` (default), `pdf`, or `csv`. Reachable from the "Export Sign-in History" button on a person's edit page, and the "Export a Person's Sign-ins" card on the Exports page (which lets an admin pick any member or staff person, a date range, and a format from a form).
+- **Dashboard, staff only:** `GET /export/staff?person_id=<id>&date_from=<optional>&date_to=<optional>&fmt=<optional>` (see `dashboard/app.py:export_staff`) does the same single-person export as above, restricted to staff, from the "Staff Signing Sheets" card's own person dropdown -- so staff exports don't require going to the generic person picker. Both routes share the single-person logic via an `_export_person_response(person, date_from, date_to, fmt)` helper in `app.py`, which builds the file in the requested format and flashes a "no records" error if the range is empty.
+- **Dashboard, self-service:** `GET /my-timesheet/download?date_from=<optional>&date_to=<optional>&fmt=<optional>` lets a logged-in staff member download their own history through the same `_export_person_response()` helper -- the person is always resolved from their session, never from a query parameter (see [09-authentication-and-security.md](09-authentication-and-security.md) for why that matters).
+- **Kiosk admin panel:** the "Export" button next to "Edit" in the Member Management and Staff Management search results opens a small date-range dialog (`_ExportRangeDialog` in `kiosk_signin/screens/admin_screen.py`) with optional From/To fields, Today/7-day/30-day quick-select buttons, and an "All history" button that clears the range. Confirming calls `AdminPanelScreen._export_single_person()`, which now accepts optional `date_from`/`date_to` and passes them straight through to `database.get_signs_for_member()`. Leaving both fields blank preserves the original full-history behaviour; the saved filename gains a `_<date_from>_to_<date_to>` suffix whenever a range is given. The file still saves to the user's home directory, same as the bulk kiosk exports. The kiosk only ever produces `.xlsx` -- the PDF/CSV formats are dashboard-only.
 
 ### Bulk Exports on the Dashboard
 
-The dashboard's Exports page only has a bulk (whole-roster, date-range) option for staff, via `GET /export/staff` with no `person_id` -- this calls `generate_staff_export()` directly over `database.get_staff_signs_for_export()`. There is no dashboard-side bulk export for all members -- exporting members individually via `/export/person` is the only dashboard path. The kiosk admin panel's own bulk member export (a separate feature, using `database.get_signs_for_export()` and `generate_export()` directly from `kiosk_signin/screens/admin_screen.py`) is unaffected and still exists.
+The dashboard's Exports page only has a bulk (whole-roster, date-range) option for staff, via `GET /export/staff` with no `person_id` -- this calls `generate_staff_export()` (or its PDF/CSV equivalent, depending on `fmt`) directly over `database.get_staff_signs_for_export()`, rather than through `_export_person_response()` (which is single-person only). There is no dashboard-side bulk export for all members -- exporting members individually via `/export/person` is the only dashboard path. The kiosk admin panel's own bulk member export (a separate feature, using `database.get_signs_for_export()` and `generate_export()` directly from `kiosk_signin/screens/admin_screen.py`) is unaffected, still exists, and only ever produces `.xlsx`.
+
+## PDF and CSV Formats
+
+Every export function described above has a PDF and a CSV counterpart, all defined in `kiosk_signin/export_util.py` next to the `.xlsx` versions, and all built from the same `_build_staff_sessions(signs)` grouping/pairing output described in [Session Pairing Algorithm](#session-pairing-algorithm-_build_staff_sessions) -- the three formats never diverge on *what* data they show, only on how it's rendered:
+
+| Excel                    | PDF                           | CSV                           |
+|---------------------------|--------------------------------|---------------------------------|
+| `generate_export()`        | `generate_export_pdf()`         | `generate_export_csv()`          |
+| `generate_staff_export()`  | `generate_staff_export_pdf()`   | `generate_staff_export_csv()`    |
+
+### CSV
+
+`_generate_person_sessions_csv()` writes one flat sheet with the stdlib `csv` module -- CSV has no concept of separate worksheets, so every person's sessions live in the same file, separated by a per-person "Total" row instead of a sheet break:
+
+```python
+writer.writerow(["Name", "Role", "Date", "Sign In", "Sign Out", "Duration"])
+...
+writer.writerow([name, role, _day_month(sess["date"]), in_text, out_text, _fmt_duration(mins)])
+...
+writer.writerow([name, role, "", "", "Total", _fmt_duration(total_mins)])
+```
+
+The dashboard writes to an `io.StringIO()` buffer (the `csv` module is text-mode), then encodes it to bytes for `send_file()`, which expects a binary stream:
+
+```python
+text_buf = io.StringIO()
+generate_export_csv(signs, export_from, export_to, text_buf)
+buf = io.BytesIO(text_buf.getvalue().encode("utf-8"))
+```
+
+### PDF
+
+`_generate_person_sessions_pdf()` renders a small HTML document -- one `<div>` per person, each with a `Date | Sign In | Sign Out | Duration` `<table>` matching the Excel layout -- and converts it with `xhtml2pdf.pisa.CreatePDF(html, dest=output)`. Every person after the first starts on a new page via a CSS `page-break-before: always;` rule on their `<div>`, mirroring the Excel version's one-sheet-per-person separation.
+
+`xhtml2pdf` was already a project dependency used by `Docs/generate_printable_docs.py` to turn the markdown docs into PDFs -- reused here rather than adding a second PDF library. Since it's now a runtime feature (not just a docs-generation dev tool), it was moved from being an implicit dev-only dependency into `requirements.txt`, and the PyInstaller build in `.github/workflows/build.yml` gained `--hidden-import xhtml2pdf --collect-submodules xhtml2pdf --collect-data xhtml2pdf` (the `--collect-data` flag matters -- xhtml2pdf ships font/data files that PyInstaller's static analysis wouldn't otherwise find) so PDF export works in the packaged `.exe`, not just when running from source.
+
+Names and roles are HTML-escaped (`html.escape()`) before being interpolated into the generated markup, since they're free-text fields that could otherwise contain characters that break the HTML (or, in principle, get interpreted as markup) -- the Excel and CSV paths don't need this since `openpyxl`/`csv` write cell values directly, with no markup layer in between.
 
 ## Signature Rendering
 

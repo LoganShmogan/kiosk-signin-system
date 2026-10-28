@@ -56,7 +56,7 @@ The Signature Screen shows:
   - **IN / OUT buttons**: Select the sign direction. The system auto-detects the correct direction based on the member's last sign event today. If the member is currently signed in, it defaults to OUT. If not signed in, it defaults to IN.
   - **Signature pad**: Draw a signature with your finger or mouse. Use "Clear signature" to reset.
 
-Tap "DONE" to submit. A signature is required — if the signature pad is empty, a popup asks you to sign before continuing and nothing is recorded. Once a signature is present, the system will:
+Tap "DONE" to submit. A signature is optional: if the pad is left empty, the sign event is still recorded, just without a signature image. The system will:
 
 1. Check each selected member's allowed direction for today.
 2. Record the sign event for eligible members.
@@ -124,7 +124,7 @@ The file is saved to the user's home directory, same as the member export.
 
 ### Change Admin Password
 
-Enter a new password (minimum 6 characters) and confirm it. The password is stored as a SHA-256 hash in the database.
+Enter a new password (minimum 6 characters) and confirm it. The password is stored as a salted hash in the database, never as plain text. See [09-authentication-and-security.md](09-authentication-and-security.md).
 
 ### Member Management
 
@@ -134,7 +134,7 @@ The Profile Screen shows all member details in a scrollable two-column form:
 
 **Left column (Child Details):**
 - First name, last name, date of birth, school
-- PIN (optional, for sign-in verification)
+- PIN (optional; stored on the profile, but not currently asked for when signing in)
 - Attendance days (mornings and afternoons)
 - Pickup requirements
 - Activity details and transport
@@ -164,3 +164,16 @@ To create a run sheet:
 To edit a run sheet, tap "Edit" next to its name. The editor will populate with the sheet's current name and assigned pupils.
 
 To delete a run sheet, tap "Delete" and confirm. Deleting a run sheet does not delete the pupils themselves.
+
+### Member / Run Alerts
+
+Alerts are short messages that pop up on the Sign In screen when the people they apply to are being signed in or out (for example, "Mum is collecting today" or "Bring hat for trip").
+
+To create an alert:
+1. Under **Applies To**, choose **All Members**, **A Run** (then pick the run sheet), or **Single Person** (then search for and tap the person).
+2. Type the **Message**.
+3. Under **Stay Up For**, choose how long it stays active: a number of Hours, Days, Weeks, or Months, or **No expiry**.
+4. Tap **Create Alert**.
+
+Active alerts are listed underneath under **Active Alerts**, showing who each applies to, the message, and when it expires, with a **Delete Alert** button. Expired alerts stop appearing automatically. Alerts created here also appear on the web dashboard's Sign In / Out page, and can be managed from the dashboard's Alerts page too.
+

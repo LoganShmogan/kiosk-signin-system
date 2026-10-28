@@ -199,6 +199,32 @@ def test_attach_different_entry_updates_target(vkb, entry, tk_root):
     assert vkb._target is entry2
 
 
+def test_attach_suppressed_immediately_after_detach_is_ignored(vkb, entry):
+    """detach() sets a short suppress window (cleared via a scheduled
+    _clear_suppress) so a stray tap right after closing the keyboard doesn't
+    immediately reopen it."""
+    vkb.attach(entry)
+    vkb.detach()
+    assert vkb._target is None
+    vkb.attach(entry)  # still suppressed -> must be a no-op
+    assert vkb._target is None
+
+
+def test_clear_suppress_resets_flag(vkb, entry):
+    vkb.attach(entry)
+    vkb.detach()
+    assert vkb._suppress_attach is True
+    vkb._clear_suppress()
+    assert vkb._suppress_attach is False
+    vkb.attach(entry)  # suppression cleared -> attach works again
+    assert vkb._target is entry
+
+
+def test_position_without_window_does_not_raise(vkb):
+    vkb._position()  # _win is None -> must return early, not raise
+    assert vkb._win is None
+
+
 # ── Typing characters ─────────────────────────────────────────────────────────
 
 def test_type_single_letter(vkb, entry):

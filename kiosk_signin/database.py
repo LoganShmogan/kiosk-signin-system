@@ -110,22 +110,6 @@ def init_db():
             PRIMARY KEY (run_id, member_id)
         );
 
-        CREATE TABLE IF NOT EXISTS holiday_periods (
-            id      INTEGER PRIMARY KEY AUTOINCREMENT,
-            name    TEXT UNIQUE NOT NULL,
-            active  INTEGER DEFAULT 1
-        );
-
-        CREATE TABLE IF NOT EXISTS holiday_enrollments (
-            id              INTEGER PRIMARY KEY AUTOINCREMENT,
-            member_id       INTEGER REFERENCES members(id) ON DELETE CASCADE,
-            period_id       INTEGER REFERENCES holiday_periods(id) ON DELETE CASCADE,
-            days            TEXT DEFAULT '',
-            afternoon_pickup INTEGER DEFAULT 0,
-            morning_pickup  INTEGER DEFAULT 0,
-            UNIQUE(member_id, period_id)
-        );
-
         CREATE TABLE IF NOT EXISTS audit_log (
             id          INTEGER PRIMARY KEY AUTOINCREMENT,
             event_type  TEXT NOT NULL,
@@ -163,11 +147,30 @@ def init_db():
         except Exception:
             pass
 
+        try:
+            conn.execute("ALTER TABLE dashboard_users ADD COLUMN member_id INTEGER REFERENCES members(id)")
+        except Exception:
+            pass
+
+        try:
+            conn.execute("ALTER TABLE dashboard_users ADD COLUMN failed_attempts INTEGER DEFAULT 0")
+        except Exception:
+            pass
+
+        try:
+            conn.execute("ALTER TABLE dashboard_users ADD COLUMN locked_until TEXT")
+        except Exception:
+            pass
+
+        # Holiday enrolment was removed; drop its tables from older databases.
+        conn.execute("DROP TABLE IF EXISTS holiday_enrollments")
+        conn.execute("DROP TABLE IF EXISTS holiday_periods")
+
         cur = conn.execute("SELECT COUNT(*) FROM admins")
         if cur.fetchone()[0] == 0:
-            h = hashlib.sha256("admin1234".encode()).hexdigest()
+            from werkzeug.security import generate_password_hash
             conn.execute("INSERT INTO admins (username, password_hash) VALUES (?, ?)",
-                         ("admin", h))
+                         ("admin", generate_password_hash("admin1234")))
 
         cur = conn.execute("SELECT COUNT(*) FROM dashboard_users")
         if cur.fetchone()[0] == 0:
@@ -180,12 +183,6 @@ def init_db():
                 "WARNING: dashboard_users seeded with default login admin/1234 — "
                 "change this immediately in the Manage Dashboard Users page."
             )
-
-        cur = conn.execute("SELECT COUNT(*) FROM holiday_periods")
-        if cur.fetchone()[0] == 0:
-            for p in ["Term 1 Break", "Term 2 Break", "Mid Year Break",
-                      "Term 3 Break", "Term 4 Break"]:
-                conn.execute("INSERT INTO holiday_periods (name) VALUES (?)", (p,))
 
         cur = conn.execute("SELECT COUNT(*) FROM members")
         if cur.fetchone()[0] == 0:
@@ -339,6 +336,9 @@ def delete_member(member_id: int):
             "SELECT first_name, last_name FROM members WHERE id=?", (member_id,)
         ).fetchone()
         name = f"{row['first_name']} {row['last_name']}" if row else f"ID {member_id}"
+        # dashboard_users.member_id has no ON DELETE action, so unlink any
+        # dashboard login first or the foreign key blocks the delete.
+        conn.execute("UPDATE dashboard_users SET member_id=NULL WHERE member_id=?", (member_id,))
         conn.execute("DELETE FROM members WHERE id=?", (member_id,))
         log_event("MEMBER_DELETED", f"Member deleted: {name}", conn)
 
@@ -370,7 +370,7 @@ def record_sign(member_id: int, direction: str, notes: str = "", signature: byte
 def get_last_sign(member_id: int):
     with get_conn() as conn:
         row = conn.execute("""SELECT * FROM sign_ins WHERE member_id=?
-                              ORDER BY id DESC LIMIT 1""",
+                              ORDER BY timestamp DESC, id DESC LIMIT 1""",
                            (member_id,)).fetchone()
     return dict(row) if row else None
 
@@ -392,7 +392,7 @@ def get_today_last_sign(member_id: int):
     with get_conn() as conn:
         row = conn.execute("""SELECT * FROM sign_ins WHERE member_id=?
                               AND timestamp LIKE ?
-                              ORDER BY id DESC LIMIT 1""",
+                              ORDER BY timestamp DESC, id DESC LIMIT 1""",
                            (member_id, f"{today}%")).fetchone()
     return dict(row) if row else None
 
@@ -422,6 +422,28 @@ def get_today_signs():
     return [dict(r) for r in rows]
 
 
+def get_currently_signed_in():
+    """Everyone (member or staff) whose most recent sign event today was
+    IN — i.e. currently on site. Used by the dashboard's "Who's Here" view
+    and the sign-in page's bulk "select all currently signed in" action."""
+    today = datetime.now().strftime("%Y-%m-%d")
+    with get_conn() as conn:
+        rows = conn.execute("""
+            SELECT m.id, m.first_name, m.last_name, s.timestamp
+            FROM members m
+            JOIN sign_ins s ON s.member_id = m.id
+            WHERE s.timestamp LIKE ?
+            AND s.direction = 'IN'
+            AND s.id = (
+                SELECT s2.id FROM sign_ins s2
+                WHERE s2.member_id = m.id AND s2.timestamp LIKE ?
+                ORDER BY s2.timestamp DESC, s2.id DESC LIMIT 1
+            )
+            ORDER BY m.last_name, m.first_name
+        """, (f"{today}%", f"{today}%")).fetchall()
+    return [dict(r) for r in rows]
+
+
 def get_sign(sign_id: int):
     with get_conn() as conn:
         row = conn.execute("""
@@ -441,6 +463,36 @@ def update_sign_time(sign_id: int, new_timestamp: str):
         )
 
 
+def get_sign_neighbours(sign_id: int):
+    """The same person's sign_ins records immediately before and after this
+    one in time order (timestamp, then id — the order the dashboard pairs
+    IN/OUT visits in). Returns (previous, next); either is None at the ends.
+    Used to keep dashboard edits/additions from reordering events, which
+    would re-pair them into different visits."""
+    with get_conn() as conn:
+        target = conn.execute(
+            "SELECT member_id FROM sign_ins WHERE id=?", (sign_id,)
+        ).fetchone()
+        if not target:
+            return None, None
+        rows = [dict(r) for r in conn.execute(
+            """SELECT * FROM sign_ins WHERE member_id=?
+               ORDER BY timestamp, id""", (target["member_id"],)
+        ).fetchall()]
+    idx = next(i for i, r in enumerate(rows) if r["id"] == sign_id)
+    prev = rows[idx - 1] if idx > 0 else None
+    nxt = rows[idx + 1] if idx + 1 < len(rows) else None
+    return prev, nxt
+
+
+def delete_signs(sign_ids: list):
+    """Delete sign_ins records by id (dashboard admin correction)."""
+    if not sign_ids:
+        return
+    with get_conn() as conn:
+        conn.executemany("DELETE FROM sign_ins WHERE id=?", [(i,) for i in sign_ids])
+
+
 def add_sign(member_id: int, direction: str, timestamp: str, notes: str = ""):
     """Insert a sign_ins record with an explicit timestamp (dashboard admin
     correction for a forgotten IN/OUT). timestamp must be 'YYYY-MM-DD HH:MM:SS'."""
@@ -455,29 +507,68 @@ def add_sign(member_id: int, direction: str, timestamp: str, notes: str = ""):
 # ── Auth ──────────────────────────────────────────────────────────────────────
 
 def check_admin_password(password: str) -> bool:
-    h = hashlib.sha256(password.encode()).hexdigest()
+    """Verifies the kiosk admin password. Stored hashes may still be in the
+    legacy unsalted-SHA-256 format from before the switch to werkzeug's
+    salted PBKDF2 hashing (werkzeug hashes always contain ':'); a legacy
+    hash that matches is transparently re-hashed in the new format so it
+    upgrades itself on first successful login, with no manual migration
+    step and no risk of locking out an already-deployed kiosk's admin."""
+    from werkzeug.security import generate_password_hash, check_password_hash
+
     with get_conn() as conn:
-        row = conn.execute("SELECT id FROM admins WHERE password_hash=?", (h,)).fetchone()
-    return row is not None
+        row = conn.execute("SELECT id, password_hash FROM admins WHERE username='admin'").fetchone()
+    if not row:
+        return False
+    stored = row["password_hash"]
+    if ":" in stored:
+        return check_password_hash(stored, password)
+    if hashlib.sha256(password.encode()).hexdigest() != stored:
+        return False
+    with get_conn() as conn:
+        conn.execute("UPDATE admins SET password_hash=? WHERE id=?",
+                     (generate_password_hash(password), row["id"]))
+    return True
 
 
 def set_admin_password(new_password: str):
-    h = hashlib.sha256(new_password.encode()).hexdigest()
+    from werkzeug.security import generate_password_hash
     with get_conn() as conn:
-        conn.execute("UPDATE admins SET password_hash=? WHERE username='admin'", (h,))
+        conn.execute("UPDATE admins SET password_hash=? WHERE username='admin'",
+                     (generate_password_hash(new_password),))
 
 
 # ── Dashboard users (web dashboard login, separate from the kiosk `admins`) ───
 
-def create_dashboard_user(name: str, pin: str, role: str):
+MIN_PASSWORD_LENGTH = 10
+LOCKOUT_THRESHOLD = 5
+LOCKOUT_MINUTES = 15
+
+
+def validate_dashboard_password(password: str):
+    """Returns an error message if the password doesn't meet the minimum
+    bar for a dashboard login, else None. Enforced only when a password is
+    created or changed -- never at login -- so accounts created before this
+    rule existed keep working unchanged."""
+    if len(password) < MIN_PASSWORD_LENGTH:
+        return f"Password must be at least {MIN_PASSWORD_LENGTH} characters."
+    if not any(c.isdigit() for c in password):
+        return "Password must contain at least one number."
+    if not any(not c.isalnum() for c in password):
+        return "Password must contain at least one special character."
+    return None
+
+
+def create_dashboard_user(name: str, pin: str, role: str, member_id: int = None):
     """Creates a dashboard login. Returns the new row id, or None if the
-    name is already taken."""
+    name is already taken. member_id optionally links this login to a
+    members row (person_type='staff') so that person can view their own
+    timesheet."""
     from werkzeug.security import generate_password_hash
     with get_conn() as conn:
         try:
             cur = conn.execute(
-                "INSERT INTO dashboard_users (name, pin_hash, role) VALUES (?, ?, ?)",
-                (name, generate_password_hash(pin), role),
+                "INSERT INTO dashboard_users (name, pin_hash, role, member_id) VALUES (?, ?, ?, ?)",
+                (name, generate_password_hash(pin), role, member_id),
             )
         except sqlite3.IntegrityError:
             return None
@@ -485,15 +576,65 @@ def create_dashboard_user(name: str, pin: str, role: str):
         return cur.lastrowid
 
 
+def update_dashboard_user(user_id: int, name: str, role: str, member_id: int = None) -> bool:
+    """Renames, re-roles, and/or re-links an existing dashboard login.
+    Does not touch the password. Returns False if the name collides with
+    a different existing user, or if user_id doesn't exist."""
+    with get_conn() as conn:
+        try:
+            cur = conn.execute(
+                "UPDATE dashboard_users SET name=?, role=?, member_id=? WHERE id=?",
+                (name, role, member_id, user_id),
+            )
+        except sqlite3.IntegrityError:
+            return False
+        if cur.rowcount == 0:
+            return False
+        log_event("DASHBOARD_USER_UPDATED", f"Dashboard user updated: {name} ({role})", conn)
+    return True
+
+
+def is_dashboard_user_locked(name: str) -> bool:
+    """True if this account is currently within an auto-expiring lockout
+    window from too many recent failed login attempts."""
+    with get_conn() as conn:
+        row = conn.execute(
+            "SELECT locked_until FROM dashboard_users WHERE name=?", (name,)
+        ).fetchone()
+    if not row or not row["locked_until"]:
+        return False
+    return row["locked_until"] > datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+
+
 def check_dashboard_login(name: str, pin: str):
-    """Returns the dashboard_users row (as dict) if name/pin match, else None."""
+    """Returns the dashboard_users row (as dict) if name/pin match, else
+    None. Tracks failed_attempts and applies an auto-expiring lockout
+    after LOCKOUT_THRESHOLD consecutive failures, on top of the existing
+    per-IP rate limit on the /login route -- this throttles slow or
+    many-IP attempts against one account name specifically. A successful
+    login resets the counter."""
     from werkzeug.security import check_password_hash
     with get_conn() as conn:
         row = conn.execute(
             "SELECT * FROM dashboard_users WHERE name=?", (name,)
         ).fetchone()
     if row and check_password_hash(row["pin_hash"], pin):
+        with get_conn() as conn:
+            conn.execute(
+                "UPDATE dashboard_users SET failed_attempts=0, locked_until=NULL WHERE id=?",
+                (row["id"],),
+            )
         return dict(row)
+    if row:
+        attempts = row["failed_attempts"] + 1
+        locked_until = None
+        if attempts >= LOCKOUT_THRESHOLD:
+            locked_until = (datetime.now() + timedelta(minutes=LOCKOUT_MINUTES)).strftime("%Y-%m-%d %H:%M:%S")
+        with get_conn() as conn:
+            conn.execute(
+                "UPDATE dashboard_users SET failed_attempts=?, locked_until=? WHERE id=?",
+                (attempts, locked_until, row["id"]),
+            )
     return None
 
 
@@ -544,6 +685,28 @@ def search_runs(query: str):
     return [dict(r) for r in rows]
 
 
+def get_run(run_id: int):
+    with get_conn() as conn:
+        row = conn.execute(
+            "SELECT * FROM run_groups WHERE id=?", (run_id,)
+        ).fetchone()
+    return dict(row) if row else None
+
+
+def list_runs(query: str = ""):
+    q = f"%{query}%"
+    with get_conn() as conn:
+        rows = conn.execute("""
+            SELECT rg.*, COUNT(rm.member_id) AS member_count
+            FROM run_groups rg
+            LEFT JOIN run_members rm ON rm.run_id = rg.id
+            WHERE rg.name LIKE ?
+            GROUP BY rg.id
+            ORDER BY rg.name
+        """, (q,)).fetchall()
+    return [dict(r) for r in rows]
+
+
 def get_run_members(run_id: int):
     with get_conn() as conn:
         rows = conn.execute("""
@@ -562,18 +725,61 @@ def upsert_run(name: str, member_ids: list) -> int:
         ).fetchone()
         if existing:
             run_id = existing["id"]
+            log_event("RUN_UPDATED", f"Run sheet updated: {name}", conn)
         else:
             cur = conn.execute("INSERT INTO run_groups (name) VALUES (?)", (name,))
             run_id = cur.lastrowid
+            log_event("RUN_CREATED", f"Run sheet created: {name}", conn)
         conn.execute("DELETE FROM run_members WHERE run_id=?", (run_id,))
         for mid in member_ids:
             conn.execute("INSERT OR IGNORE INTO run_members VALUES (?,?)", (run_id, mid))
     return run_id
 
 
+def create_run(name: str, member_ids: list):
+    """Insert-only version of upsert_run for the dashboard's "New Run Sheet"
+    form. Returns None instead of raising if the name is already taken
+    (run_groups.name is UNIQUE), so the route can flash a friendly error."""
+    try:
+        with get_conn() as conn:
+            cur = conn.execute("INSERT INTO run_groups (name) VALUES (?)", (name,))
+            run_id = cur.lastrowid
+            for mid in member_ids:
+                conn.execute("INSERT OR IGNORE INTO run_members VALUES (?,?)", (run_id, mid))
+            log_event("RUN_CREATED", f"Run sheet created: {name}", conn)
+        return run_id
+    except sqlite3.IntegrityError:
+        return None
+
+
+def update_run(run_id: int, name: str, member_ids: list) -> bool:
+    """Rename an existing run sheet by id and replace its membership.
+    Returns False instead of raising if the new name collides with a
+    different run sheet, or if run_id doesn't exist."""
+    try:
+        with get_conn() as conn:
+            cur = conn.execute(
+                "UPDATE run_groups SET name=? WHERE id=?", (name, run_id)
+            )
+            if cur.rowcount == 0:
+                return False
+            conn.execute("DELETE FROM run_members WHERE run_id=?", (run_id,))
+            for mid in member_ids:
+                conn.execute("INSERT OR IGNORE INTO run_members VALUES (?,?)", (run_id, mid))
+            log_event("RUN_UPDATED", f"Run sheet updated: {name}", conn)
+        return True
+    except sqlite3.IntegrityError:
+        return False
+
+
 def delete_run(run_id: int):
     with get_conn() as conn:
+        row = conn.execute(
+            "SELECT name FROM run_groups WHERE id=?", (run_id,)
+        ).fetchone()
         conn.execute("DELETE FROM run_groups WHERE id=?", (run_id,))
+        if row:
+            log_event("RUN_DELETED", f"Run sheet deleted: {row['name']}", conn)
 
 
 # ── Alerts ────────────────────────────────────────────────────────────────────
@@ -645,43 +851,6 @@ def get_alerts_for_members(member_ids: list) -> list:
     return [dict(r) for r in rows]
 
 
-# ── Holiday periods & enrollments ─────────────────────────────────────────────
-
-def get_holiday_periods():
-    with get_conn() as conn:
-        rows = conn.execute(
-            "SELECT * FROM holiday_periods WHERE active=1 ORDER BY id"
-        ).fetchall()
-    return [dict(r) for r in rows]
-
-
-def get_holiday_enrollment(member_id: int, period_id: int):
-    with get_conn() as conn:
-        row = conn.execute("""SELECT * FROM holiday_enrollments
-                              WHERE member_id=? AND period_id=?""",
-                           (member_id, period_id)).fetchone()
-    return dict(row) if row else None
-
-
-def upsert_holiday_enrollment(data: dict):
-    with get_conn() as conn:
-        conn.execute("""INSERT INTO holiday_enrollments
-            (member_id, period_id, days, afternoon_pickup, morning_pickup)
-            VALUES (:member_id, :period_id, :days, :afternoon_pickup, :morning_pickup)
-            ON CONFLICT(member_id, period_id) DO UPDATE SET
-                days=excluded.days,
-                afternoon_pickup=excluded.afternoon_pickup,
-                morning_pickup=excluded.morning_pickup
-        """, data)
-
-
-def delete_holiday_enrollment(member_id: int, period_id: int):
-    with get_conn() as conn:
-        conn.execute("""DELETE FROM holiday_enrollments
-                        WHERE member_id=? AND period_id=?""",
-                     (member_id, period_id))
-
-
 # ── Export ────────────────────────────────────────────────────────────────────
 
 def get_signs_for_export(date_from: str, date_to: str) -> list:
@@ -716,8 +885,8 @@ def get_staff_signs_for_export(date_from: str, date_to: str) -> list:
 def get_signs_for_member(member_id: int, date_from: str = None, date_to: str = None) -> list:
     """Sign-in/out events for one person. With no dates, returns full history."""
     sql = """
-        SELECT s.member_id, m.first_name, m.last_name, m.school AS role,
-               s.direction, s.timestamp, s.signature
+        SELECT s.id, s.member_id, m.first_name, m.last_name, m.school AS role,
+               s.direction, s.timestamp, s.notes, s.signature
         FROM sign_ins s
         JOIN members m ON s.member_id = m.id
         WHERE s.member_id = ?

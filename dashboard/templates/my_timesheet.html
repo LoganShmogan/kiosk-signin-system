@@ -1,0 +1,65 @@
+{% extends 'base.html' %}
+{% block title %}My Timesheet — Kiosk Sign-In{% endblock %}
+
+{% block content %}
+<h1 class="page-title">My Timesheet</h1>
+<p class="page-subtitle">Your own sign-in/out history. Pick a date range (e.g. a fortnight for pay) and download it, or leave the dates blank for your entire history.</p>
+
+<form method="GET" action="{{ url_for('my_timesheet') }}" class="filter-form">
+    <div class="form-group">
+        <label>From date</label>
+        <input type="date" name="date_from" value="{{ date_from }}">
+    </div>
+    <div class="form-group">
+        <label>To date</label>
+        <input type="date" name="date_to" value="{{ date_to }}">
+    </div>
+    <button type="submit" class="btn">Filter</button>
+    <a href="{{ url_for('my_timesheet') }}" class="btn btn-secondary">Clear</a>
+</form>
+
+<form method="GET" action="{{ url_for('my_timesheet_download') }}" class="filter-form">
+    <input type="hidden" name="date_from" value="{{ date_from }}">
+    <input type="hidden" name="date_to" value="{{ date_to }}">
+    <div class="form-group">
+        <label>Download format</label>
+        <select name="fmt">
+            <option value="xlsx">Excel (.xlsx)</option>
+            <option value="pdf">PDF</option>
+            <option value="csv">CSV</option>
+        </select>
+    </div>
+    <button type="submit" class="btn">Download</button>
+</form>
+
+<div class="table-wrap">
+    <table>
+        <thead>
+            <tr>
+                <th>In</th>
+                <th>Out</th>
+                <th>Status</th>
+                <th>Notes</th>
+            </tr>
+        </thead>
+        <tbody>
+        {% for row in visits %}
+        <tr>
+            <td>{{ row.in_time or '—' }}</td>
+            <td>{{ row.out_time or '—' }}</td>
+            <td>
+                {% if row.out_time %}
+                <span class="badge badge-out">SIGNED OUT</span>
+                {% else %}
+                <span class="badge badge-in">SIGNED IN</span>
+                {% endif %}
+            </td>
+            <td>{{ [row.in_notes, row.out_notes] | select | join(' / ') or '—' }}</td>
+        </tr>
+        {% else %}
+        <tr><td colspan="4" style="color:#999;text-align:center;padding:20px">No sign-in records found.</td></tr>
+        {% endfor %}
+        </tbody>
+    </table>
+</div>
+{% endblock %}

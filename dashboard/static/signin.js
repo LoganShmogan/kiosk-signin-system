@@ -2,7 +2,6 @@
     "use strict";
 
     var currentType = "member";
-    var selected = {}; // id -> name
     var alertsShownFor = null; // serialized id list we've already alerted for
 
     var typeTabs = document.getElementById("signin-type-tabs");
@@ -21,8 +20,26 @@
     var alertModal = document.getElementById("signin-alert-modal");
     var alertMessages = document.getElementById("signin-alert-messages");
     var alertDismiss = document.getElementById("signin-alert-dismiss");
+    var selectAllInBtn = document.getElementById("signin-select-all-in");
+    var runSearchInput = document.getElementById("runsheet-load-search");
+    var runResultsBox = document.getElementById("runsheet-load-results");
 
     var direction = "IN";
+
+    var picker = window.PersonPicker.init({
+        searchInput: searchInput,
+        resultsBox: resultsBox,
+        selectedBox: selectedBox,
+        selectedEmpty: selectedEmpty,
+        searchUrl: function (q) {
+            return "/signin/search?type=" + encodeURIComponent(currentType) + "&q=" + encodeURIComponent(q);
+        },
+        onChange: function (selected) {
+            var ids = Object.keys(selected);
+            detailsCard.style.display = ids.length ? "block" : "none";
+            fetchAlerts(ids);
+        },
+    });
 
     // ── Type tabs ──────────────────────────────────────────────────────────
     typeTabs.addEventListener("click", function (e) {
@@ -38,87 +55,8 @@
         resultsBox.style.display = "none";
     });
 
-    // ── Search ─────────────────────────────────────────────────────────────
-    var searchTimer = null;
-    searchInput.addEventListener("input", function () {
-        var q = searchInput.value.trim();
-        clearTimeout(searchTimer);
-        if (!q) {
-            resultsBox.innerHTML = "";
-            resultsBox.style.display = "none";
-            return;
-        }
-        searchTimer = setTimeout(function () { runSearch(q); }, 200);
-    });
-
-    function runSearch(q) {
-        fetch("/signin/search?type=" + encodeURIComponent(currentType) + "&q=" + encodeURIComponent(q))
-            .then(function (r) { return r.json(); })
-            .then(function (data) { renderResults(data.results || []); });
-    }
-
-    function renderResults(results) {
-        resultsBox.innerHTML = "";
-        if (!results.length) {
-            resultsBox.style.display = "none";
-            return;
-        }
-        results.forEach(function (r) {
-            var item = document.createElement("div");
-            item.className = "signin-search-result";
-            item.textContent = r.name;
-            item.addEventListener("click", function () {
-                addSelected(r.id, r.name);
-                searchInput.value = "";
-                resultsBox.innerHTML = "";
-                resultsBox.style.display = "none";
-                searchInput.focus();
-            });
-            resultsBox.appendChild(item);
-        });
-        resultsBox.style.display = "block";
-    }
-
-    // ── Selected list ──────────────────────────────────────────────────────
-    function addSelected(id, name) {
-        selected[id] = name;
-        renderSelected();
-        fetchAlerts();
-    }
-
-    function removeSelected(id) {
-        delete selected[id];
-        renderSelected();
-    }
-
-    function renderSelected() {
-        var ids = Object.keys(selected);
-        selectedBox.innerHTML = "";
-        if (!ids.length) {
-            selectedBox.appendChild(selectedEmpty);
-            detailsCard.style.display = "none";
-            return;
-        }
-        ids.forEach(function (id) {
-            var chip = document.createElement("span");
-            chip.className = "signin-chip";
-            chip.textContent = selected[id] + " ";
-            var remove = document.createElement("a");
-            remove.href = "#";
-            remove.className = "signin-chip-remove";
-            remove.textContent = "✕";
-            remove.addEventListener("click", function (e) {
-                e.preventDefault();
-                removeSelected(id);
-            });
-            chip.appendChild(remove);
-            selectedBox.appendChild(chip);
-        });
-        detailsCard.style.display = "block";
-    }
-
-    function fetchAlerts() {
-        var ids = Object.keys(selected);
+    // ── Alerts ─────────────────────────────────────────────────────────────
+    function fetchAlerts(ids) {
         if (!ids.length) return;
         var key = ids.slice().sort().join(",");
         if (key === alertsShownFor) return;
@@ -150,6 +88,69 @@
                 b.classList.toggle("active", b === btn);
             });
         });
+    });
+
+    // ── Load a Run Sheet ──────────────────────────────────────────────────
+    var runSearchTimer = null;
+    runSearchInput.addEventListener("input", function () {
+        var q = runSearchInput.value.trim();
+        clearTimeout(runSearchTimer);
+        if (!q) {
+            runResultsBox.innerHTML = "";
+            runResultsBox.style.display = "none";
+            return;
+        }
+        runSearchTimer = setTimeout(function () { runRunSearch(q); }, 200);
+    });
+
+    function runRunSearch(q) {
+        fetch("/run-sheets/search?q=" + encodeURIComponent(q))
+            .then(function (r) { return r.json(); })
+            .then(function (data) { renderRunResults(data.results || []); });
+    }
+
+    function renderRunResults(results) {
+        runResultsBox.innerHTML = "";
+        if (!results.length) {
+            runResultsBox.style.display = "none";
+            return;
+        }
+        results.forEach(function (r) {
+            var item = document.createElement("div");
+            item.className = "signin-search-result";
+            item.textContent = r.name;
+            item.addEventListener("click", function () {
+                loadRunMembers(r.id);
+                runSearchInput.value = "";
+                runResultsBox.innerHTML = "";
+                runResultsBox.style.display = "none";
+            });
+            runResultsBox.appendChild(item);
+        });
+        runResultsBox.style.display = "block";
+    }
+
+    function loadRunMembers(runId) {
+        fetch("/run-sheets/" + encodeURIComponent(runId) + "/members")
+            .then(function (r) { return r.json(); })
+            .then(function (data) {
+                (data.members || []).forEach(function (m) {
+                    picker.addPerson(m.id, m.name);
+                });
+            });
+    }
+
+    // ── Select all currently signed in ─────────────────────────────────────
+    selectAllInBtn.addEventListener("click", function () {
+        fetch("/signin/currently-in")
+            .then(function (r) { return r.json(); })
+            .then(function (data) {
+                (data.members || []).forEach(function (m) {
+                    picker.addPerson(m.id, m.name);
+                });
+                var outBtn = document.querySelector(".signin-dir-out");
+                if (outBtn) outBtn.click();
+            });
     });
 
     // ── Signature pad ──────────────────────────────────────────────────────
@@ -215,7 +216,7 @@
 
     // ── Submit ─────────────────────────────────────────────────────────────
     submitBtn.addEventListener("click", function () {
-        var ids = Object.keys(selected);
+        var ids = picker.getSelectedIds();
         if (!ids.length) {
             alert("Select at least one person first.");
             return;

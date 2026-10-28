@@ -17,11 +17,21 @@
         <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
         <div class="form-group">
             <label>New date &amp; time</label>
-            <input type="datetime-local" name="timestamp"
-                   value="{{ sign.timestamp[:16].replace(' ', 'T') }}" required>
+            <input type="datetime-local" name="timestamp" value="{{ value }}"
+                   {% if after %}min="{{ to_input(after) }}"{% endif %}
+                   {% if before %}max="{{ to_input(before) }}"{% endif %} required>
+            {% include '_sign_bounds.html' %}
         </div>
-        <button type="submit" class="btn">Save</button>
-        <a href="{{ url_for('logs') }}" class="btn btn-secondary">Cancel</a>
+        <div class="form-actions">
+            <button type="submit" class="btn">Save</button>
+            <a href="{{ url_for('logs') }}" class="btn btn-secondary">Cancel</a>
+            <button type="submit" form="delete-sign-form" class="btn btn-danger">Delete this sign-{{ 'in' if sign.direction == 'IN' else 'out' }}</button>
+        </div>
+    </form>
+    <form id="delete-sign-form" method="POST" action="{{ url_for('sign_delete') }}"
+          onsubmit="return confirm('Delete this sign-{{ 'in' if sign.direction == 'IN' else 'out' }} record? This cannot be undone.')">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+        <input type="hidden" name="sign_id" value="{{ sign.id }}">
     </form>
 </div>
 {% endblock %}

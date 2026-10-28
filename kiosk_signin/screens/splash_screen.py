@@ -109,7 +109,6 @@ class OptionsScreen(tk.Frame):
         # ("Group Sign-in",           "group_signin",       theme.BTN_BG,         theme.BTN_HOVER),
         ("Run Sheets", "run_sheets", theme.BTN_BG, theme.BTN_HOVER),
         # ("Centre Enrollment",       "enrollment",         theme.BTN_BG,         theme.BTN_HOVER),
-        # ("Holiday Enrollment",      "holiday_enrollment", theme.BTN_BG,         theme.BTN_HOVER),
         (
             "Social Media & Contacts",
             "social",

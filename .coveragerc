@@ -4,12 +4,7 @@ omit = */tests/*, */__pycache__/*
 
 [report]
 show_missing = True
-# The private original this fork is based on targets 100%, achieved via a full
-# Tkinter-screen test harness (fixtures that drive each screen's widgets) that
-# predates this fork and hasn't been ported here yet — see Docs/10-testing.md.
-# Set to the fork's actual current coverage (with a small margin) so CI catches
-# real regressions without requiring that harness. Raise this as coverage grows.
-fail_under = 37
+fail_under = 100
 exclude_lines =
     pragma: no cover
     if __name__ == .__main__.:

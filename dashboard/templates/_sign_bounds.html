@@ -1,0 +1,8 @@
+{% if after or before %}
+<p class="field-hint">
+    To stay part of this visit, the time must be
+    {% if after %}after <strong>{{ after }}</strong>{% endif %}
+    {% if after and before %} and {% endif %}
+    {% if before %}before <strong>{{ before }}</strong>{% endif %}.
+</p>
+{% endif %}

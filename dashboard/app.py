@@ -63,6 +63,29 @@ app.config.update(
 csrf = CSRFProtect(app)
 limiter = Limiter(get_remote_address, app=app, default_limits=[])
 
+
+@app.after_request
+def _set_security_headers(response):
+    """Standard response hardening headers -- free, no external service,
+    and safe for both the plain-HTTP LAN path and the HTTPS tunnel path.
+    'unsafe-inline' is needed because dashboard.html/alerts.html inject
+    server-rendered data via inline <script> blocks, and several templates
+    use inline style="" attributes; every inline script/style is our own
+    template output, never user-supplied, so this is a pragmatic choice
+    over threading CSP nonces through the whole template set."""
+    response.headers["X-Content-Type-Options"] = "nosniff"
+    response.headers["X-Frame-Options"] = "DENY"
+    response.headers["Referrer-Policy"] = "same-origin"
+    response.headers["Content-Security-Policy"] = (
+        "default-src 'self'; "
+        "script-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net; "
+        "style-src 'self' 'unsafe-inline'; "
+        "img-src 'self' data:"
+    )
+    if request.is_secure:
+        response.headers["Strict-Transport-Security"] = "max-age=31536000; includeSubDomains"
+    return response
+
 if getattr(sys, "frozen", False):  # pragma: no cover — only true inside a PyInstaller build
     _data_dir = os.path.join(
         os.environ.get("LOCALAPPDATA", os.path.dirname(sys.executable)),
@@ -134,19 +157,24 @@ def index():
 def login():
     error = None
     if request.method == "POST":
-        from database import check_dashboard_login
+        from database import check_dashboard_login, is_dashboard_user_locked
         name = request.form.get("username", "").strip()
         pin = request.form.get("password", "").strip()
-        user = check_dashboard_login(name, pin)
-        if user:
-            session.clear()
-            session["user_id"] = user["id"]
-            session["name"] = user["name"]
-            session["role"] = user["role"]
-            session.permanent = True
-            log_event("DASHBOARD_LOGIN", f"{user['role']} '{user['name']}' logged into the web dashboard")
-            return redirect(url_for("dashboard" if user["role"] == "admin" else "signin"))
-        error = "Invalid name or PIN."
+        if is_dashboard_user_locked(name):
+            error = "Account temporarily locked after repeated failed logins. Try again in a few minutes."
+        else:
+            user = check_dashboard_login(name, pin)
+            if user:
+                session.clear()
+                session["user_id"] = user["id"]
+                session["name"] = user["name"]
+                session["role"] = user["role"]
+                session["member_id"] = user.get("member_id")
+                session.permanent = True
+                log_event("DASHBOARD_LOGIN", f"{user['role']} '{user['name']}' logged into the web dashboard")
+                return redirect(url_for("dashboard" if user["role"] == "admin" else "signin"))
+            log_event("DASHBOARD_LOGIN_FAILED", f"Failed login attempt for '{name}'")
+            error = "Invalid name or password."
     return render_template("login.html", error=error)
 
 
@@ -261,37 +289,15 @@ def _today_snapshot(conn, today):
     """Today's sign-in count, currently-signed-in count, and the list of
     who's currently in — the subset of dashboard data shared with the
     lightweight staff /status view."""
+    from database import get_currently_signed_in
+
     today_ins = conn.execute("""
         SELECT COUNT(DISTINCT member_id) as c FROM sign_ins
         WHERE DATE(timestamp) = ? AND direction = 'IN'
     """, (today,)).fetchone()["c"]
 
-    currently_in = conn.execute("""
-        SELECT COUNT(*) as c FROM (
-            SELECT s.member_id FROM sign_ins s
-            WHERE DATE(s.timestamp) = ?
-            AND s.direction = 'IN'
-            AND s.id = (
-                SELECT MAX(id) FROM sign_ins s2
-                WHERE s2.member_id = s.member_id
-                AND DATE(s2.timestamp) = ?
-            )
-        )
-    """, (today, today)).fetchone()["c"]
-
-    signed_in_list = conn.execute("""
-        SELECT m.first_name, m.last_name, s.timestamp
-        FROM members m
-        JOIN sign_ins s ON s.member_id = m.id
-        WHERE DATE(s.timestamp) = ?
-        AND s.direction = 'IN'
-        AND s.id = (
-            SELECT MAX(id) FROM sign_ins s2
-            WHERE s2.member_id = m.id AND DATE(s2.timestamp) = ?
-        )
-        ORDER BY m.last_name, m.first_name
-    """, (today, today)).fetchall()
-    signed_in_list = [dict(r) for r in signed_in_list]
+    signed_in_list = get_currently_signed_in()
+    currently_in = len(signed_in_list)
 
     return today_ins, currently_in, signed_in_list
 
@@ -313,6 +319,49 @@ def status():
         currently_in=currently_in,
         signed_in_list=signed_in_list,
     )
+
+
+@app.route("/my-timesheet")
+@login_required
+def my_timesheet():
+    """Self-service view of the logged-in staff member's own sign-in
+    history. The person is resolved strictly from the session's linked
+    member_id -- never from a client-supplied id -- so one staff account
+    can never view another's timesheet."""
+    from database import get_dashboard_user, get_signs_for_member
+
+    user = get_dashboard_user(session["user_id"])
+    if not user or not user.get("member_id"):
+        flash("Your account isn't linked to a staff record yet. Ask an admin to link it "
+              "from the Manage Dashboard Users page.", "error")
+        return redirect(url_for("signin"))
+
+    date_from = request.args.get("date_from", "").strip()
+    date_to = request.args.get("date_to", "").strip()
+    rows = get_signs_for_member(user["member_id"], date_from or None, date_to or None)
+    visits = _pair_sign_in_visits(rows)
+
+    return render_template("my_timesheet.html", visits=visits, date_from=date_from, date_to=date_to)
+
+
+@app.route("/my-timesheet/download")
+@login_required
+def my_timesheet_download():
+    from database import get_dashboard_user, get_member
+
+    user = get_dashboard_user(session["user_id"])
+    if not user or not user.get("member_id"):
+        flash("Your account isn't linked to a staff record yet. Ask an admin to link it "
+              "from the Manage Dashboard Users page.", "error")
+        return redirect(url_for("signin"))
+
+    person = get_member(user["member_id"])
+    date_from = request.args.get("date_from", "").strip()
+    date_to = request.args.get("date_to", "").strip()
+    fmt = request.args.get("fmt", "xlsx")
+
+    resp = _export_person_response(person, date_from, date_to, fmt)
+    return resp if resp is not None else redirect(url_for("my_timesheet"))
 
 
 @app.route("/dashboard")
@@ -421,6 +470,7 @@ def _pair_sign_in_visits(rows):
                 "member_id": mid,
                 "first_name": row["first_name"],
                 "last_name": row["last_name"],
+                "person_type": row["person_type"] if "person_type" in row.keys() else None,
                 "in_id": row["id"],
                 "in_time": row["timestamp"],
                 "in_notes": row["notes"],
@@ -440,6 +490,7 @@ def _pair_sign_in_visits(rows):
                     "member_id": mid,
                     "first_name": row["first_name"],
                     "last_name": row["last_name"],
+                    "person_type": row["person_type"] if "person_type" in row.keys() else None,
                     "in_id": None,
                     "in_time": None,
                     "in_notes": None,
@@ -465,14 +516,10 @@ def logs():
     date_to = request.args.get("date_to", "")
     search = request.args.get("search", "").strip()
 
+    # Date filters are applied to visits after pairing, not to the raw rows —
+    # otherwise an IN just outside the range would leave its OUT orphaned.
     where_parts = []
     params = []
-    if date_from:
-        where_parts.append("DATE(s.timestamp) >= ?")
-        params.append(date_from)
-    if date_to:
-        where_parts.append("DATE(s.timestamp) <= ?")
-        params.append(date_to)
     if search:
         where_parts.append("(m.first_name || ' ' || m.last_name) LIKE ?")
         params.append(f"%{search}%")
@@ -480,7 +527,8 @@ def logs():
 
     with get_conn() as conn:
         rows = conn.execute(
-            f"""SELECT s.id, s.member_id, m.first_name, m.last_name, s.direction, s.timestamp, s.notes
+            f"""SELECT s.id, s.member_id, m.first_name, m.last_name, m.person_type,
+                       s.direction, s.timestamp, s.notes
                 FROM sign_ins s JOIN members m ON s.member_id=m.id
                 {where_clause}
                 ORDER BY s.member_id, s.timestamp, s.id""",
@@ -488,6 +536,11 @@ def logs():
         ).fetchall()
 
     visits = _pair_sign_in_visits(rows)
+
+    if date_from:
+        visits = [v for v in visits if (v["in_time"] or v["out_time"])[:10] >= date_from]
+    if date_to:
+        visits = [v for v in visits if (v["in_time"] or v["out_time"])[:10] <= date_to]
 
     if status == "OPEN":
         visits = [v for v in visits if v["out_time"] is None]
@@ -513,26 +566,62 @@ def logs():
     )
 
 
+def _parse_sign_time(raw: str):
+    """datetime-local form value -> 'YYYY-MM-DD HH:MM:00', or None if invalid."""
+    try:
+        return datetime.strptime(raw.strip(), "%Y-%m-%dT%H:%M").strftime("%Y-%m-%d %H:%M:00")
+    except ValueError:
+        return None
+
+
+def _time_in_bounds(ts: str, after, before) -> bool:
+    """True if ts falls strictly between the neighbouring records' timestamps.
+    Keeping an edited/added record inside its neighbours means the IN/OUT
+    order is preserved, so the visit it belongs to on /logs never changes
+    (moving an OUT before its IN would otherwise split one visit into two)."""
+    return (after is None or ts > after) and (before is None or ts < before)
+
+
+def _bounds_error(after, before) -> str:
+    if after and before:
+        return f"Time must be after {after} and before {before} to stay part of this visit."
+    if after:
+        return f"Time must be after {after} to stay part of this visit."
+    return f"Time must be before {before} to stay part of this visit."
+
+
+def _to_input(ts):
+    """'YYYY-MM-DD HH:MM:SS' -> datetime-local value, or '' for None."""
+    return ts[:16].replace(" ", "T") if ts else ""
+
+
 @app.route("/logs/sign/<int:sign_id>/edit", methods=["GET", "POST"])
 @admin_required
 def sign_edit(sign_id):
-    from database import get_sign, update_sign_time
+    from database import get_sign, get_sign_neighbours, update_sign_time
 
     sign = get_sign(sign_id)
     if not sign:
         flash("Sign-in record not found.", "error")
         return redirect(url_for("logs"))
 
+    prev, nxt = get_sign_neighbours(sign_id)
+    after = prev["timestamp"] if prev else None
+    before = nxt["timestamp"] if nxt else None
+    ctx = dict(sign=sign, after=after, before=before,
+               value=_to_input(sign["timestamp"]), to_input=_to_input)
+
     if request.method == "POST":
-        raw = request.form.get("timestamp", "").strip()
-        try:
-            parsed = datetime.strptime(raw, "%Y-%m-%dT%H:%M")
-        except ValueError:
+        new_timestamp = _parse_sign_time(request.form.get("timestamp", ""))
+        if new_timestamp is None:
             flash("Enter a valid date and time.", "error")
-            return render_template("sign_edit.html", sign=sign)
+            return render_template("sign_edit.html", **ctx)
+        if not _time_in_bounds(new_timestamp, after, before):
+            flash(_bounds_error(after, before), "error")
+            ctx["value"] = _to_input(new_timestamp)
+            return render_template("sign_edit.html", **ctx)
 
         old_timestamp = sign["timestamp"]
-        new_timestamp = parsed.strftime("%Y-%m-%d %H:%M:00")
         update_sign_time(sign_id, new_timestamp)
         log_event(
             "SIGN_TIME_EDITED",
@@ -542,16 +631,17 @@ def sign_edit(sign_id):
         flash("Sign-in time updated.", "success")
         return redirect(url_for("logs"))
 
-    return render_template("sign_edit.html", sign=sign)
+    return render_template("sign_edit.html", **ctx)
 
 
 @app.route("/logs/sign/add", methods=["GET", "POST"])
 @admin_required
 def sign_add():
-    from database import get_member, add_sign
+    from database import get_member, get_sign, get_sign_neighbours, add_sign
 
     member_id = request.values.get("member_id", type=int)
     direction = request.values.get("direction", "").upper()
+    pair_id = request.values.get("pair_id", type=int)
 
     if not member_id or direction not in ("IN", "OUT"):
         flash("Invalid request.", "error")
@@ -562,18 +652,37 @@ def sign_add():
         flash("Person not found.", "error")
         return redirect(url_for("logs"))
 
-    default_date = request.values.get("date", "").strip() or date.today().isoformat()
+    # The existing other half of the visit this record completes: a missing
+    # OUT is added to an IN, a missing IN to a stray OUT.
+    pair = get_sign(pair_id) if pair_id else None
+    if (not pair or pair["member_id"] != member_id
+            or pair["direction"] == direction):
+        flash("Sign-in record not found.", "error")
+        return redirect(url_for("logs"))
+
+    prev, nxt = get_sign_neighbours(pair_id)
+    if direction == "OUT":
+        after, before = pair["timestamp"], (nxt["timestamp"] if nxt else None)
+        default = datetime.strptime(pair["timestamp"][:16], "%Y-%m-%d %H:%M") + timedelta(minutes=1)
+    else:
+        after, before = (prev["timestamp"] if prev else None), pair["timestamp"]
+        default = datetime.strptime(pair["timestamp"][:16], "%Y-%m-%d %H:%M")
+        if pair["timestamp"][17:19] in ("", "00"):
+            default -= timedelta(minutes=1)
+    ctx = dict(person=person, direction=direction, pair=pair,
+               after=after, before=before,
+               value=default.strftime("%Y-%m-%dT%H:%M"), to_input=_to_input)
 
     if request.method == "POST":
-        raw = request.form.get("timestamp", "").strip()
-        try:
-            parsed = datetime.strptime(raw, "%Y-%m-%dT%H:%M")
-        except ValueError:
+        new_timestamp = _parse_sign_time(request.form.get("timestamp", ""))
+        if new_timestamp is None:
             flash("Enter a valid date and time.", "error")
-            return render_template("sign_add.html", person=person, direction=direction,
-                                   default_date=default_date)
+            return render_template("sign_add.html", **ctx)
+        if not _time_in_bounds(new_timestamp, after, before):
+            flash(_bounds_error(after, before), "error")
+            ctx["value"] = _to_input(new_timestamp)
+            return render_template("sign_add.html", **ctx)
 
-        new_timestamp = parsed.strftime("%Y-%m-%d %H:%M:00")
         add_sign(member_id, direction, new_timestamp)
         log_event(
             "SIGN_TIME_ADDED",
@@ -583,8 +692,31 @@ def sign_add():
         flash("Sign-in record added.", "success")
         return redirect(url_for("logs"))
 
-    return render_template("sign_add.html", person=person, direction=direction,
-                           default_date=default_date)
+    return render_template("sign_add.html", **ctx)
+
+
+@app.route("/logs/sign/delete", methods=["POST"])
+@admin_required
+def sign_delete():
+    """Delete one or more sign_ins records — a single IN/OUT from the edit
+    page, or both halves of a visit from the logs table."""
+    from database import get_sign, delete_signs
+
+    signs = [get_sign(i) for i in request.form.getlist("sign_id", type=int)]
+    signs = [s for s in signs if s]
+    if not signs:
+        flash("Sign-in record not found.", "error")
+        return redirect(url_for("logs"))
+
+    delete_signs([s["id"] for s in signs])
+    for s in signs:
+        log_event(
+            "SIGN_DELETED",
+            f"{s['first_name']} {s['last_name']}'s {s['direction']} at "
+            f"{s['timestamp']} deleted",
+        )
+    flash("Sign-in record deleted." if len(signs) == 1 else "Visit deleted.", "success")
+    return redirect(url_for("logs"))
 
 
 @app.route("/audit")
@@ -794,6 +926,113 @@ def person_delete(person_id):
     return redirect(url_for("people", type=person_type))
 
 
+@app.route("/run-sheets")
+@login_required
+def run_sheets():
+    from database import list_runs
+
+    search = request.args.get("search", "").strip()
+    runs = list_runs(search)
+    return render_template("run_sheets.html", runs=runs, search=search)
+
+
+@app.route("/run-sheets/new", methods=["GET", "POST"])
+@login_required
+def run_sheet_new():
+    if request.method == "POST":
+        from database import create_run
+
+        name = request.form.get("name", "").strip()
+        member_ids = [int(x) for x in request.form.getlist("member_ids") if x.strip().isdigit()]
+        if not name:
+            flash("Run sheet name is required.", "error")
+            return render_template("run_sheet_form.html", run={}, members=[], is_new=True)
+
+        run_id = create_run(name, member_ids)
+        if run_id is None:
+            flash(f"A run sheet named \"{name}\" already exists.", "error")
+            return render_template("run_sheet_form.html", run={"name": name}, members=[], is_new=True)
+
+        flash("Run sheet created.", "success")
+        return redirect(url_for("run_sheets"))
+
+    return render_template("run_sheet_form.html", run={}, members=[], is_new=True)
+
+
+@app.route("/run-sheets/<int:run_id>/edit", methods=["GET", "POST"])
+@login_required
+def run_sheet_edit(run_id):
+    from database import get_run, get_run_members, update_run
+
+    run = get_run(run_id)
+    if not run:
+        flash("Run sheet not found.", "error")
+        return redirect(url_for("run_sheets"))
+
+    if request.method == "POST":
+        name = request.form.get("name", "").strip()
+        member_ids = [int(x) for x in request.form.getlist("member_ids") if x.strip().isdigit()]
+        if not name:
+            flash("Run sheet name is required.", "error")
+            members = [{"id": m["id"], "name": f"{m['first_name']} {m['last_name']}"} for m in get_run_members(run_id)]
+            return render_template("run_sheet_form.html", run=run, members=members, is_new=False)
+
+        if not update_run(run_id, name, member_ids):
+            flash(f"A run sheet named \"{name}\" already exists.", "error")
+            members = [{"id": m["id"], "name": f"{m['first_name']} {m['last_name']}"} for m in get_run_members(run_id)]
+            return render_template("run_sheet_form.html", run={**run, "name": name}, members=members, is_new=False)
+
+        flash("Run sheet updated.", "success")
+        return redirect(url_for("run_sheets"))
+
+    members = [{"id": m["id"], "name": f"{m['first_name']} {m['last_name']}"} for m in get_run_members(run_id)]
+    return render_template("run_sheet_form.html", run=run, members=members, is_new=False)
+
+
+@app.route("/run-sheets/<int:run_id>/delete", methods=["POST"])
+@login_required
+def run_sheet_delete(run_id):
+    from database import get_run, delete_run
+
+    run = get_run(run_id)
+    if not run:
+        flash("Run sheet not found.", "error")
+        return redirect(url_for("run_sheets"))
+    delete_run(run_id)
+    flash(f"Run sheet \"{run['name']}\" deleted.", "success")
+    return redirect(url_for("run_sheets"))
+
+
+@app.route("/run-sheets/search")
+@login_required
+def run_sheet_search():
+    from database import search_runs
+
+    q = request.args.get("q", "").strip()
+    if not q:
+        return {"results": []}
+    results = [{"id": r["id"], "name": r["name"]} for r in search_runs(q)]
+    return {"results": results}
+
+
+@app.route("/run-sheets/<int:run_id>/members")
+@login_required
+def run_sheet_members(run_id):
+    from database import get_run_members
+
+    members = [{"id": m["id"], "name": f"{m['first_name']} {m['last_name']}"} for m in get_run_members(run_id)]
+    return {"members": members}
+
+
+@app.route("/signin/currently-in")
+@login_required
+def signin_currently_in():
+    from database import get_currently_signed_in
+
+    members = [{"id": m["id"], "name": f"{m['first_name']} {m['last_name']}"} for m in get_currently_signed_in()]
+    return {"members": members}
+
+
 @app.route("/alerts", methods=["GET", "POST"])
 @admin_required
 def alerts():
@@ -876,11 +1115,24 @@ def exports():
                            members=members, staff=staff)
 
 
-def _export_person_response(person, date_from, date_to):
-    """Build the Excel download for one person's sign-in history, or flash
-    a "no records" message and return None if the range is empty."""
+_EXPORT_FORMATS = {
+    "xlsx": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    "pdf": "application/pdf",
+    "csv": "text/csv",
+}
+
+
+def _export_person_response(person, date_from, date_to, fmt="xlsx"):
+    """Build the download for one person's sign-in history in the given
+    format (xlsx/pdf/csv), or flash a "no records" message and return None
+    if the range is empty."""
     from database import get_signs_for_member
-    from export_util import generate_export, generate_staff_export
+    from export_util import (generate_export, generate_staff_export,
+                             generate_export_pdf, generate_staff_export_pdf,
+                             generate_export_csv, generate_staff_export_csv)
+
+    if fmt not in _EXPORT_FORMATS:
+        fmt = "xlsx"
 
     signs = get_signs_for_member(person["id"], date_from or None, date_to or None)
     if not signs:
@@ -891,40 +1143,51 @@ def _export_person_response(person, date_from, date_to):
     dates = [s["timestamp"][:10] for s in signs]
     export_from = date_from or min(dates)
     export_to = date_to or max(dates)
-
-    buf = io.BytesIO()
     person_type = person.get("person_type") or "member"
-    if person_type == "staff":
-        generate_staff_export(signs, export_from, export_to, buf)
+
+    if fmt == "pdf":
+        buf = io.BytesIO()
+        (generate_staff_export_pdf if person_type == "staff" else generate_export_pdf)(
+            signs, export_from, export_to, buf)
+    elif fmt == "csv":
+        text_buf = io.StringIO()
+        (generate_staff_export_csv if person_type == "staff" else generate_export_csv)(
+            signs, export_from, export_to, text_buf)
+        buf = io.BytesIO(text_buf.getvalue().encode("utf-8"))
     else:
-        generate_export(signs, export_from, export_to, buf)
+        buf = io.BytesIO()
+        (generate_staff_export if person_type == "staff" else generate_export)(
+            signs, export_from, export_to, buf)
     buf.seek(0)
 
     safe_name = f"{person['first_name']}_{person['last_name']}".replace(" ", "_")
-    filename = f"KioskSignIn_{safe_name}_Export_{export_from}_{export_to}.xlsx"
+    filename = f"KioskSignIn_{safe_name}_Export_{export_from}_{export_to}.{fmt}"
     log_event("DASHBOARD_EXPORT",
               f"Sign-in history exported for {person['first_name']} {person['last_name']} "
               f"({export_from} to {export_to})")
     return send_file(buf, as_attachment=True, download_name=filename,
-                     mimetype="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+                     mimetype=_EXPORT_FORMATS[fmt])
 
 
 @app.route("/export/staff")
 @admin_required
 def export_staff():
     from database import get_member, get_staff_signs_for_export
-    from export_util import generate_staff_export
+    from export_util import generate_staff_export, generate_staff_export_pdf, generate_staff_export_csv
 
     person_id = request.args.get("person_id", type=int)
     date_from = request.args.get("date_from", "").strip()
     date_to = request.args.get("date_to", "").strip()
+    fmt = request.args.get("fmt", "xlsx")
+    if fmt not in _EXPORT_FORMATS:
+        fmt = "xlsx"
 
     if person_id:
         person = get_member(person_id)
         if not person or (person.get("person_type") or "member") != "staff":
             flash("Staff member not found.", "error")
             return redirect(url_for("exports"))
-        resp = _export_person_response(person, date_from, date_to)
+        resp = _export_person_response(person, date_from, date_to, fmt)
         return resp if resp is not None else redirect(url_for("exports"))
 
     if not date_from or not date_to:
@@ -932,14 +1195,22 @@ def export_staff():
 
     signs = get_staff_signs_for_export(date_from, date_to)
 
-    buf = io.BytesIO()
-    generate_staff_export(signs, date_from, date_to, buf)
+    if fmt == "pdf":
+        buf = io.BytesIO()
+        generate_staff_export_pdf(signs, date_from, date_to, buf)
+    elif fmt == "csv":
+        text_buf = io.StringIO()
+        generate_staff_export_csv(signs, date_from, date_to, text_buf)
+        buf = io.BytesIO(text_buf.getvalue().encode("utf-8"))
+    else:
+        buf = io.BytesIO()
+        generate_staff_export(signs, date_from, date_to, buf)
     buf.seek(0)
 
-    filename = f"KioskSignIn_Staff_Export_{date_from}_{date_to}.xlsx"
+    filename = f"KioskSignIn_Staff_Export_{date_from}_{date_to}.{fmt}"
     log_event("DASHBOARD_EXPORT", f"Staff export downloaded: {date_from} to {date_to}")
     return send_file(buf, as_attachment=True, download_name=filename,
-                     mimetype="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+                     mimetype=_EXPORT_FORMATS[fmt])
 
 
 @app.route("/export/person")
@@ -959,8 +1230,9 @@ def export_person():
 
     date_from = request.args.get("date_from", "").strip()
     date_to = request.args.get("date_to", "").strip()
+    fmt = request.args.get("fmt", "xlsx")
 
-    resp = _export_person_response(person, date_from, date_to)
+    resp = _export_person_response(person, date_from, date_to, fmt)
     return resp if resp is not None else redirect(request.referrer or url_for("exports"))
 
 
@@ -984,28 +1256,82 @@ def person_signature(person_id):
 @app.route("/dashboard-users")
 @admin_required
 def dashboard_users():
-    from database import list_dashboard_users
-    return render_template("dashboard_users.html", users=list_dashboard_users())
+    from database import list_dashboard_users, search_staff
+    staff = search_staff("")
+    staff_by_id = {s["id"]: f"{s['first_name']} {s['last_name']}" for s in staff}
+    return render_template("dashboard_users.html", users=list_dashboard_users(),
+                           staff=staff, staff_by_id=staff_by_id)
 
 
 @app.route("/dashboard-users/new", methods=["POST"])
 @admin_required
 def dashboard_user_new():
-    from database import create_dashboard_user
+    from database import create_dashboard_user, validate_dashboard_password
     name = request.form.get("name", "").strip()
     pin = request.form.get("pin", "").strip()
     role = request.form.get("role", "staff")
+    member_id = request.form.get("member_id", type=int) or None
     if role not in ("admin", "staff"):
         role = "staff"
     if not name or not pin:
-        flash("Name and PIN are required.", "error")
+        flash("Name and password are required.", "error")
         return redirect(url_for("dashboard_users"))
-    user_id = create_dashboard_user(name, pin, role)
+    err = validate_dashboard_password(pin)
+    if err:
+        flash(err, "error")
+        return redirect(url_for("dashboard_users"))
+    user_id = create_dashboard_user(name, pin, role, member_id)
     if user_id is None:
         flash(f"A dashboard user named '{name}' already exists.", "error")
     else:
         flash(f"Dashboard user '{name}' created.", "success")
     return redirect(url_for("dashboard_users"))
+
+
+@app.route("/dashboard-users/<int:user_id>/edit", methods=["GET", "POST"])
+@admin_required
+def dashboard_user_edit(user_id):
+    from database import (get_dashboard_user, update_dashboard_user, set_dashboard_user_pin,
+                           validate_dashboard_password, list_dashboard_users, search_staff)
+    target = get_dashboard_user(user_id)
+    if not target:
+        flash("Dashboard user not found.", "error")
+        return redirect(url_for("dashboard_users"))
+
+    if request.method == "POST":
+        name = request.form.get("name", "").strip()
+        role = request.form.get("role", "staff")
+        if role not in ("admin", "staff"):
+            role = "staff"
+        member_id = request.form.get("member_id", type=int) or None
+        new_pin = request.form.get("pin", "").strip()
+
+        if not name:
+            flash("Name is required.", "error")
+            return render_template("dashboard_user_edit.html", user=target, staff=search_staff(""))
+
+        admins = [u for u in list_dashboard_users() if u["role"] == "admin"]
+        if target["role"] == "admin" and role != "admin" and len(admins) <= 1:
+            flash("Cannot change the role of the last remaining admin account.", "error")
+            return render_template("dashboard_user_edit.html", user=target, staff=search_staff(""))
+
+        if new_pin:
+            err = validate_dashboard_password(new_pin)
+            if err:
+                flash(err, "error")
+                return render_template("dashboard_user_edit.html", user=target, staff=search_staff(""))
+
+        if not update_dashboard_user(user_id, name, role, member_id):
+            flash(f"A dashboard user named '{name}' already exists.", "error")
+            return render_template("dashboard_user_edit.html", user=target, staff=search_staff(""))
+
+        if new_pin:
+            set_dashboard_user_pin(user_id, new_pin)
+
+        flash(f"Dashboard user '{name}' updated.", "success")
+        return redirect(url_for("dashboard_users"))
+
+    return render_template("dashboard_user_edit.html", user=target, staff=search_staff(""))
 
 
 @app.route("/dashboard-users/<int:user_id>/delete", methods=["POST"])

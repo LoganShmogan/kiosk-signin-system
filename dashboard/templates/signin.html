@@ -17,6 +17,16 @@
         <div id="signin-search-results" class="signin-search-results"></div>
     </div>
 
+    <div class="form-group" style="position:relative">
+        <label>Or load a run sheet</label>
+        <input type="text" id="runsheet-load-search" autocomplete="off" placeholder="Start typing a run sheet name…">
+        <div id="runsheet-load-results" class="signin-search-results"></div>
+    </div>
+
+    <div class="form-group">
+        <button type="button" class="btn btn-secondary btn-small" id="signin-select-all-in">Select all currently signed in</button>
+    </div>
+
     <div class="form-group">
         <label>Selected</label>
         <div id="signin-selected" class="signin-selected-list">
@@ -68,5 +78,6 @@
     </div>
 </div>
 
+<script src="{{ url_for('static', filename='person-picker.js') }}"></script>
 <script src="{{ url_for('static', filename='signin.js') }}"></script>
 {% endblock %}

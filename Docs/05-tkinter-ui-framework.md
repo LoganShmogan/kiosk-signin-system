@@ -31,6 +31,9 @@ Navigation lifts the target screen to the top of the stack:
 
 ```python
 def show_screen(self, name, **kwargs):
+    if name not in self._screens:
+        print(f"[App] Unknown screen '{name}' — going to tap")
+        name = "tap"
     screen = self._screens[name]
     screen.lift()
     if hasattr(screen, "on_show"):
@@ -108,7 +111,7 @@ A `tk.Canvas` subclass that captures freehand drawing input:
 - Draws lines in real-time using `create_line()`.
 - Exports stroke data as a serialised byte string for storage in the database.
 - Uses `grab_set()` and `grab_release()` to prevent touch events from propagating during drawing.
-- Exposes `has_signature()` (returns `True` once at least one stroke has been drawn), which `SignatureScreen._submit()` checks before recording a sign event — submitting with an empty canvas is blocked with a popup asking the user to sign first.
+- `export_bytes()` returns `None` when nothing has been drawn. A signature is optional, so `SignatureScreen._submit()` records the sign event either way and simply stores `signature=None` for an empty canvas.
 
 ```python
 def _draw(self, e):
@@ -141,10 +144,6 @@ A `tk.Toplevel` window used for confirmation dialogs and status messages. Featur
 - Auto-sizing based on message length.
 - Colour-coded accent bar (red for errors, green for success).
 - Scrollable message text for long content.
-
-### PINPad
-
-A numeric keypad widget for PIN entry. Displays a masked entry field and a 4x3 grid of buttons (0-9, DEL, ENT). Callbacks are fired through an `on_confirm` parameter.
 
 ## Dropdown Pattern
 
@@ -192,7 +191,7 @@ The theme defines colour constants (page background, content background, button 
 
 ## Virtual Keyboard
 
-Two keyboard implementations exist:
+The kiosk has one built-in on-screen keyboard, used on Windows. Linux relies on the system keyboard instead.
 
 ### VirtualKeyboard (virtual_keyboard.py)
 
@@ -204,10 +203,6 @@ Used on Windows. A full QWERTY keyboard that appears as a `tk.Toplevel` window a
 
 The `App` class manages keyboard visibility by listening to `FocusIn` and `FocusOut` events on all `Entry` widgets. A short delay on `FocusOut` prevents the keyboard from flickering when focus moves between entries.
 
-### OnScreenKeyboard (widgets.py)
-
-An embedded keyboard widget with QWERTY and numeric modes. This is a `tk.Frame` that can be placed inside any container. It is not currently used in the main application but is available as a component.
-
 ### System Keyboard (Linux)
 
-On Linux, the application does not use either built-in keyboard. Instead, it relies on the system's on-screen keyboard (e.g. Squeekboard, Onboard) which is managed by the window manager. The kiosk window is set to a fixed 1280x720 size (rather than fullscreen) so the window manager can resize it when the system keyboard appears.
+On Linux, the application does not use the built-in keyboard. Instead, it relies on the system's on-screen keyboard (e.g. Squeekboard, Onboard) which is managed by the window manager. The kiosk window is set to a fixed 1280x720 size (rather than fullscreen) so the window manager can resize it when the system keyboard appears.

@@ -8,7 +8,7 @@ The system uses a single SQLite database file (`signin_data.db`) accessed by bot
 
 ## Schema
 
-The database consists of ten tables:
+The database consists of eleven tables:
 
 ### members
 
@@ -76,21 +76,26 @@ Stores the admin account. Only one admin account exists by default.
 |---------------|---------|------------------------------|
 | id            | INTEGER | Primary key                  |
 | username      | TEXT    | Unique username              |
-| password_hash | TEXT    | SHA-256 hash of the password |
+| password_hash | TEXT    | Salted PBKDF2 hash of the password (`werkzeug.security`). Legacy unsalted SHA-256 hashes from older installs are upgraded automatically on the next successful login |
 
 ### dashboard_users
 
-Login accounts for the **web dashboard** — separate from the kiosk's single-row `admins` table above. Supports any number of accounts, each with its own name, hashed PIN, and role.
+Login accounts for the **web dashboard** -- separate from the kiosk's single-row `admins` table above. Supports any number of accounts, each with its own name, hashed password, and role.
 
-| Column      | Type    | Purpose                                         |
-|-------------|---------|--------------------------------------------------|
-| id          | INTEGER | Primary key                                      |
-| name        | TEXT    | Unique login name                                |
-| pin_hash    | TEXT    | Salted hash of the PIN (`werkzeug.security`)     |
-| role        | TEXT    | `"admin"` or `"staff"` (enforced with CHECK)     |
-| created_at  | TEXT    | Auto-set to local datetime on insert             |
+| Column          | Type    | Purpose                                                     |
+|-----------------|---------|---------------------------------------------------------------|
+| id              | INTEGER | Primary key                                                   |
+| name            | TEXT    | Unique login name                                              |
+| pin_hash        | TEXT    | Salted hash of the password (`werkzeug.security`); column name kept as `pin_hash` for backward compatibility even though it now stores a password, not a numeric PIN |
+| role            | TEXT    | `"admin"` or `"staff"` (enforced with CHECK)                   |
+| created_at      | TEXT    | Auto-set to local datetime on insert                           |
+| member_id       | INTEGER | Optional FK to `members.id`. Links a staff login to their own staff record so they can view/download their own timesheet on the "My Timesheet" page. `NULL` for admin accounts and for staff logins an admin hasn't linked yet. |
+| failed_attempts | INTEGER | Count of consecutive failed logins for this account, defaults to 0. Reset to 0 on a successful login. |
+| locked_until    | TEXT    | If set and in the future, this account is temporarily locked out of logging in, even with the correct password. `NULL` when not locked. |
 
-`admin` accounts get full dashboard access; `staff` accounts can only use the web Sign In/Out page. One `admin`/`1234` row is seeded on first run so the dashboard always has a working login — see [09-authentication-and-security.md](09-authentication-and-security.md) for the hashing scheme, session model, and why this table is kept separate from `admins` rather than extending it.
+`admin` accounts get full dashboard access; `staff` accounts can only use the web Sign In/Out page (and their own timesheet, if `member_id` is set). One `admin`/`1234` row is seeded on first run so the dashboard always has a working login -- see [09-authentication-and-security.md](09-authentication-and-security.md) for the hashing scheme, password rules, lockout behavior, session model, and why this table is kept separate from `admins` rather than extending it.
+
+`member_id`, `failed_attempts`, and `locked_until` were added after the table already existed in deployed installs, via the same additive `ALTER TABLE ... ADD COLUMN` migration pattern used throughout `init_db()` (see [Schema Migration](#schema-migration) below) -- existing rows get `NULL`/`0` defaults automatically, and no manual migration step is ever needed.
 
 ### run_groups and run_members
 
@@ -112,30 +117,7 @@ Run sheets group members for batch sign-in (e.g. a school bus run). `run_members
 
 Composite primary key on `(run_id, member_id)`.
 
-### holiday_periods and holiday_enrollments
-
-Manages holiday programme enrolments.
-
-**holiday_periods:**
-
-| Column | Type    | Purpose                         |
-|--------|---------|---------------------------------|
-| id     | INTEGER | Primary key                     |
-| name   | TEXT    | e.g. "Term 1 Break"            |
-| active | INTEGER | Boolean, controls visibility    |
-
-**holiday_enrollments:**
-
-| Column           | Type    | Purpose                             |
-|------------------|---------|-------------------------------------|
-| id               | INTEGER | Primary key                         |
-| member_id        | INTEGER | Foreign key to members              |
-| period_id        | INTEGER | Foreign key to holiday_periods      |
-| days             | TEXT    | Comma-separated enrolled days       |
-| afternoon_pickup | INTEGER | Boolean                             |
-| morning_pickup   | INTEGER | Boolean                             |
-
-Unique constraint on `(member_id, period_id)` to prevent duplicate enrolments.
+Run sheets can be fully managed (created, renamed, and deleted, with membership edited) from both the kiosk's Run Sheets screen and the web dashboard's Run Sheets pages -- see [06-flask-web-dashboard.md](06-flask-web-dashboard.md#run-sheets-web) for why the dashboard uses id-keyed `create_run()`/`update_run()` functions rather than the kiosk's name-keyed `upsert_run()`. Every create, rename, and delete is recorded in `audit_log` (`RUN_CREATED`, `RUN_UPDATED`, `RUN_DELETED`), regardless of which side made the change.
 
 ### audit_log
 
@@ -148,17 +130,32 @@ Immutable log of all system events (sign-ins, profile changes, exports, dashboar
 | description | TEXT    | Human-readable description      |
 | timestamp   | TEXT    | Auto-set to local datetime      |
 
+### alerts
+
+Messages that pop up when particular people are being signed in or out, on both the kiosk and the web Sign In / Out page. Created from the kiosk Admin Panel ("Member / Run Alerts") or the dashboard's Alerts page.
+
+| Column     | Type    | Purpose                                                              |
+|------------|---------|----------------------------------------------------------------------|
+| id         | INTEGER | Primary key                                                          |
+| scope      | TEXT    | `"all"`, `"run"`, or `"member"` (enforced with CHECK)                |
+| target_id  | INTEGER | `run_groups.id` for `run`, `members.id` for `member`, `NULL` for `all` |
+| message    | TEXT    | Required. The text shown in the popup                                |
+| created_at | TEXT    | Auto-set to local datetime on insert                                 |
+| expires_at | TEXT    | When the alert stops appearing. `NULL` means it never expires        |
+
+`target_id` is not a foreign key, because it points at a different table depending on `scope`. Deleting a run sheet or person therefore leaves their alerts in place, and the Alerts page shows the target as "(deleted run)" or "(deleted person)". `get_alerts_for_members(member_ids)` returns every unexpired alert that applies to any of the given people: `all` alerts, `member` alerts for those ids, and `run` alerts for any run sheet they belong to. Creating and deleting alerts is recorded in `audit_log` (`ALERT_CREATED`, `ALERT_DELETED`).
+
 ## Entity Relationship Summary
 
 ```
 members  1 --- *  sign_ins
 members  1 --- 1  caregivers
 members  * --- *  run_groups       (via run_members junction table)
-members  1 --- *  holiday_enrollments
-holiday_periods  1 --- *  holiday_enrollments
+members  1 --- *  dashboard_users  (optional member_id link, for My Timesheet)
+alerts   * --- 1  members or run_groups  (scope + target_id, not a foreign key)
 ```
 
-All foreign keys use `ON DELETE CASCADE`, so deleting a member automatically removes their sign-in records, caregiver details, run sheet assignments, and holiday enrolments.
+The foreign keys on `sign_ins`, `caregivers`, and `run_members` use `ON DELETE CASCADE`, so deleting a member automatically removes their sign-in records, caregiver details, and run sheet assignments. `dashboard_users.member_id` has no `ON DELETE` action, so `delete_member()` first sets `member_id` to `NULL` on any linked dashboard login (in the same transaction) before deleting the member. The login itself is kept; it just loses its My Timesheet link.
 
 ## Programming Concepts Applied
 
@@ -187,8 +184,6 @@ Setting `conn.row_factory = sqlite3.Row` means query results are returned as `sq
 
 The `upsert_member()` function checks whether the data dictionary contains an `id` key. If it does, it performs an UPDATE; otherwise, it performs an INSERT and returns the new row's ID via `cursor.lastrowid`. This avoids requiring separate create and update functions.
 
-For `upsert_holiday_enrollment()`, SQLite's `ON CONFLICT ... DO UPDATE` syntax is used for a true upsert based on the unique `(member_id, period_id)` pair.
-
 ### Schema Migration
 
 New columns are added using `ALTER TABLE ... ADD COLUMN` wrapped in try/except blocks. If the column already exists, the `ALTER TABLE` raises an error which is silently caught. This allows the schema to evolve without requiring a separate migration tool.
@@ -202,7 +197,7 @@ except Exception:
 
 ### Seed Data
 
-`init_db()` checks whether key tables are empty (e.g. `SELECT COUNT(*) FROM admins`) and inserts default data if so. This provides a working system out of the box with sample members, a default kiosk admin account, a default dashboard login (`dashboard_users`), and preset holiday periods.
+`init_db()` checks whether key tables are empty (e.g. `SELECT COUNT(*) FROM admins`) and inserts default data if so. This provides a working system out of the box with sample members, a default kiosk admin account, and a default dashboard login (`dashboard_users`).
 
 ### Parameterised Queries
 
@@ -220,4 +215,8 @@ The `get_allowed_direction()` function implements a small state machine for the 
 2. Last sign today was `IN`: allowed direction is `OUT`
 3. Last sign today was `OUT`: allowed direction is `IN`
 
-There is no time-of-day cutoff and no daily session limit — a person can sign in and out as many times as they like, at any time of day. The function only ever alternates between `IN` and `OUT` based on the most recent event; it never returns `None`. An earlier version locked a person out after a second ("PM") sign-out each day — that lockout was removed so both members and staff can freely sign in/out whenever they need to (e.g. staff popping out and back multiple times in a shift).
+There is no time-of-day cutoff and no daily session limit — a person can sign in and out as many times as they like, at any time of day. The function only ever alternates between `IN` and `OUT` based on the most recent event; it never returns `None`. "Most recent" means latest by `timestamp` (then `id` as a tie-break), not by insertion order -- a record back-dated from the dashboard's Logs page is inserted with a higher `id` but an earlier time, and must not count as the person's latest event. `get_last_sign()` and `get_currently_signed_in()` use the same ordering.
+
+### Dashboard Corrections
+
+The dashboard's Logs page edits sign records with `update_sign_time()`, `add_sign()` and `delete_signs()`. Because IN/OUT visits are rebuilt from time order rather than stored, `get_sign_neighbours(sign_id)` returns the person's records immediately before and after a given one; the dashboard only accepts a new/edited time strictly between those, so a correction can never re-pair records into different visits. An earlier version locked a person out after a second ("PM") sign-out each day — that lockout was removed so both members and staff can freely sign in/out whenever they need to (e.g. staff popping out and back multiple times in a shift).

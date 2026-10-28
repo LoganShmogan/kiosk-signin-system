@@ -43,29 +43,30 @@
 
 <div class="chart-section">
     <h2>Daily Activity — Last 30 Days</h2>
-    <canvas id="dailyChart" height="70"></canvas>
+    <div class="chart-box"><canvas id="dailyChart"></canvas></div>
 </div>
 
 <div class="chart-grid">
     <div class="chart-section">
         <h2>Peak Hours — All Time</h2>
-        <canvas id="hourChart" height="120"></canvas>
+        <div class="chart-box"><canvas id="hourChart"></canvas></div>
     </div>
     <div class="chart-section">
         <h2>Weekly Totals — Last 12 Weeks</h2>
-        <canvas id="weeklyChart" height="120"></canvas>
+        <div class="chart-box"><canvas id="weeklyChart"></canvas></div>
     </div>
 </div>
 
 <div class="chart-section">
     <h2>Monthly Totals — Last 12 Months</h2>
-    <canvas id="monthlyChart" height="55"></canvas>
+    <div class="chart-box"><canvas id="monthlyChart"></canvas></div>
 </div>
 
 <script>
 const baseOpts = {
     animation: false,
     responsive: true,
+    maintainAspectRatio: false,
     plugins: {
         legend: { display: false }
     },

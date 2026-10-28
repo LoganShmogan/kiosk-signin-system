@@ -639,17 +639,6 @@ class AdminPanelScreen(tk.Frame):
                                             highlightbackground=theme.BORDER_COLOR)
         self._alerts_list_frame.pack(fill="x", pady=(0, 8))
 
-        Divider(col, bg=theme.BORDER_COLOR).pack(fill="x", pady=12)
-
-        # ── Holiday periods ────────────────────────────────────────────────────
-        self._section(col, "Holiday Periods")
-        MutedLabel(col, text="Manage holiday period enrollment.",
-                   bg=theme.CONTENT_BG).pack(anchor="w", pady=(0, 8))
-        TouchButton(col, text="Manage Holiday Enrollment",
-                    command=lambda: self.app.show_screen("holiday_enrollment"),
-                    bg=theme.BTN_BG, fg="white",
-                    font_cfg=theme.F_LABEL).pack(anchor="w", ipady=8, ipadx=12)
-
     # ── Section helper ─────────────────────────────────────────────────────────
 
     def _section(self, parent, title):

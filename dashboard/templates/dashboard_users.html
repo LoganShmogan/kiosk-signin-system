@@ -3,7 +3,7 @@
 
 {% block content %}
 <h1 class="page-title">Dashboard Users</h1>
-<p class="page-subtitle">Accounts that can log into this web dashboard. Admins have full access; staff can only use the Sign In / Out page.</p>
+<p class="page-subtitle">Accounts that can log into this web dashboard. Admins have full access; staff can only use the Sign In / Out page. Link a staff login to their staff record so they can view and download their own timesheet.</p>
 
 <div class="form-card">
     <h2>New Dashboard User</h2>
@@ -15,8 +15,8 @@
                 <input type="text" name="name" required placeholder="e.g. Sarah">
             </div>
             <div class="form-group">
-                <label>PIN</label>
-                <input type="password" name="pin" required inputmode="numeric" placeholder="Numeric PIN">
+                <label>Password</label>
+                <input type="password" name="pin" required minlength="10" placeholder="At least 10 characters, 1 number, 1 special character">
             </div>
         </div>
         <div class="form-group">
@@ -25,6 +25,15 @@
                 <label class="radio-opt"><input type="radio" name="role" value="staff" checked> Staff (Sign In / Out only)</label>
                 <label class="radio-opt"><input type="radio" name="role" value="admin"> Admin (full access)</label>
             </div>
+        </div>
+        <div class="form-group">
+            <label>Linked staff member (optional)</label>
+            <select name="member_id">
+                <option value="">-- none --</option>
+                {% for s in staff %}
+                <option value="{{ s.id }}">{{ s.first_name }} {{ s.last_name }}</option>
+                {% endfor %}
+            </select>
         </div>
         <div class="form-actions">
             <button type="submit" class="btn">Create User</button>
@@ -35,15 +44,17 @@
 <div class="table-wrap">
     <table>
         <thead>
-            <tr><th>Name</th><th>Role</th><th>Created</th><th></th></tr>
+            <tr><th>Name</th><th>Role</th><th>Linked Staff</th><th>Created</th><th></th></tr>
         </thead>
         <tbody>
         {% for u in users %}
         <tr>
             <td>{{ u.name }}</td>
             <td><span class="badge {{ 'badge-in' if u.role == 'admin' else 'badge-out' }}">{{ u.role }}</span></td>
+            <td>{{ staff_by_id.get(u.member_id, '—') }}</td>
             <td>{{ u.created_at[:16] if u.created_at else '—' }}</td>
-            <td>
+            <td class="row-actions">
+                <a href="{{ url_for('dashboard_user_edit', user_id=u.id) }}" class="btn btn-small">Edit</a>
                 <form method="POST" action="{{ url_for('dashboard_user_delete', user_id=u.id) }}" onsubmit="return confirm('Delete dashboard user \'' + {{ u.name|tojson }} + '\'?')">
                     <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
                     <button type="submit" class="btn btn-danger btn-small">Delete</button>
@@ -51,7 +62,7 @@
             </td>
         </tr>
         {% else %}
-        <tr><td colspan="4" style="color:#999;text-align:center;padding:20px">No dashboard users yet.</td></tr>
+        <tr><td colspan="5" style="color:#999;text-align:center;padding:20px">No dashboard users yet.</td></tr>
         {% endfor %}
         </tbody>
     </table>

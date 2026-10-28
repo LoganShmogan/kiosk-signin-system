@@ -44,6 +44,8 @@ The `requirements.txt` file lists all Python dependencies:
 | Package        | Purpose                                          |
 |----------------|--------------------------------------------------|
 | Flask          | Web dashboard framework                          |
+| Werkzeug       | WSGI toolkit under Flask (pinned version)        |
+| xhtml2pdf      | PDF export generation                            |
 | openpyxl       | Excel (.xlsx) file generation                    |
 | Pillow         | Image processing for signature rendering         |
 | pytest         | Test framework                                   |
@@ -192,6 +194,8 @@ The dashboard is served on `0.0.0.0:5000` by Waitress (a production WSGI server 
 
 ### Internet Access via a Reverse Tunnel
 
-The dashboard can additionally be exposed to the internet at a URL like `https://kiosk-dashboard.example.com` through a tunnel tool (e.g. Cloudflare Tunnel's `cloudflared`), which handles HTTPS/TLS termination at its own edge -- no certificates or reverse proxy need to be managed on the kiosk itself. Because of this, the dashboard's own hardening focuses on what's still its responsibility: a real (non-hardcoded) secret key, hashed multi-user logins, CSRF protection, login rate limiting, and (only in a deployment reachable exclusively over HTTPS) cookies marked `Secure`. See [09-authentication-and-security.md](09-authentication-and-security.md) for the full picture.
+The dashboard can additionally be exposed to the internet at a URL like `https://kiosk-dashboard.example.com` through a tunnel tool (e.g. Cloudflare Tunnel's `cloudflared`, running as a Windows service on the kiosk), which handles HTTPS/TLS termination at its own edge — no certificates, reverse proxy, port forwarding, or static IP need to be managed on site. The tunnel, DNS, routine checks, and troubleshooting are covered in [14-dashboard-hosting.md](14-dashboard-hosting.md).
+
+Because of this, the dashboard's own hardening focuses on what's still its responsibility: a real (non-hardcoded) secret key, hashed multi-user logins with per-account lockout, CSRF protection, login rate limiting, and security response headers. Session cookies are *not* marked `Secure` by default, because the same process also serves plain-HTTP LAN access (set `DASHBOARD_COOKIE_SECURE=true` only for an HTTPS-only deployment). See [09-authentication-and-security.md](09-authentication-and-security.md) for the full picture.
 
 **Deployment note:** because the secret key source and session format changed as part of this hardening, every existing browser session is invalidated the first time this version runs -- everyone (including the admin) needs to log in again afterwards. This is expected, not a bug.
