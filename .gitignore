@@ -214,3 +214,10 @@ __marimo__/
 # added stuff
 kiosk_signin/README.md
 kiosk_signin/email_config.json
+
+# Secrets: never commit these
+.env.*
+!.env.example
+*.db
+*.pem
+*.key
